@@ -382,9 +382,15 @@ class ModCard(CardWidget):
                 import json as _json
                 entries = _json.loads(last_apply_skip_summary or "[]")
                 for e in entries[:8]:
-                    label = e.get("label") or e.get("file") or "?"
+                    lab = e.get("label") or ""
+                    fil = e.get("file") or ""
                     reason = e.get("reason") or ""
-                    tip_lines.append(f"• {label} — {reason}" if reason else f"• {label}")
+                    if lab and fil:
+                        head = f"{lab} ({fil})"
+                    else:
+                        head = lab or fil or "?"
+                    tip_lines.append(
+                        f"• {head} , {reason}" if reason else f"• {head}")
                 if len(entries) > 8:
                     tip_lines.append(f"… +{len(entries) - 8} more")
             except Exception:
