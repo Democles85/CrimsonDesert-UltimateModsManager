@@ -731,6 +731,11 @@ def _apply_byte_patches(data: bytearray, changes: list[dict],
             "offset": offset_val if offset_val is not None else -1,
             "reason": reason,
         }
+        # Propagate the originating mod's id when the aggregator tagged
+        # the change. Lets the apply pipeline attribute partial-skip
+        # results back to a specific mod card for the post-apply badge.
+        if "_source_mod_id" in change:
+            entry["_source_mod_id"] = change["_source_mod_id"]
         skipped_out.append(entry)
     mismatched = 0
     relocated = 0

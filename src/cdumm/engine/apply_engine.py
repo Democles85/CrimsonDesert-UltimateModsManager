@@ -274,10 +274,17 @@ def aggregate_json_mods_into_synthetic_patches(
                 all_changes = apply_custom_values(all_changes, custom_vals)
             # Per-mod disabled_patches filter (flat indexed across all
             # of THIS mod's changes, matching how the picker records it).
+            # Also tag each surviving change with `_source_mod_id` so
+            # downstream skip-recording can attribute byte-mismatch
+            # failures back to the mod that supplied the change.
+            # Without this tag, a partial-skip apply knows "N patches
+            # skipped total" but can't badge the responsible mod card.
             filtered = []
             for c in all_changes:
                 if flat_idx not in disabled:
-                    filtered.append(c)
+                    tagged = dict(c)
+                    tagged["_source_mod_id"] = mod_id
+                    filtered.append(tagged)
                 flat_idx += 1
             if not filtered:
                 continue
