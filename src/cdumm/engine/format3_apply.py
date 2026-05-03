@@ -211,6 +211,14 @@ def expand_format3_into_aggregated(
                 )
             continue
 
+        # Tag each change with the contributing mod's id so the apply
+        # pipeline's _record_skip can attribute byte-mismatch failures
+        # back to this mod and persist_skip_summary writes a row that
+        # lights up the yellow SKIPPED badge. Without this tag, skips
+        # land anonymous and the badge stays dark for the entire
+        # Format 3 ecosystem.
+        for c in changes:
+            c["_source_mod_id"] = mod_id
         aggregated.setdefault(target, []).extend(changes)
         # Update summary counters for the apply-time log line.
         n_mods_changed += 1
