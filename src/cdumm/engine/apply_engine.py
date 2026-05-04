@@ -45,13 +45,23 @@ def persist_skip_summary(
     silently failed.
     """
     import json as _json
-    # Tally skips per mod_id
+    # Tally skips per mod_id. A skip entry can carry either:
+    #   _source_mod_id  (single int)  , the v2 / per-mod Format 3 path
+    #   _source_mod_ids (list[int])   , whole-table Format 3 merged
+    # H3 fix: fan _source_mod_ids out so all contributors get credited.
     by_mod: dict[int, list[dict]] = {}
     for s in patch_skips:
-        mod_id = s.get("_source_mod_id")
-        if mod_id is None:
+        ids: list[int] = []
+        single = s.get("_source_mod_id")
+        if single is not None:
+            ids.append(int(single))
+        plural = s.get("_source_mod_ids")
+        if plural:
+            ids.extend(int(i) for i in plural)
+        if not ids:
             continue
-        by_mod.setdefault(int(mod_id), []).append(s)
+        for mid in ids:
+            by_mod.setdefault(mid, []).append(s)
 
     for mod_id in participating_mod_ids:
         skips = by_mod.get(int(mod_id), [])
@@ -403,6 +413,7 @@ def _expand_format3_into_synth_data(
     synth_data: dict, db, vanilla_dir, game_dir,
     get_vanilla_entry_content, extract_sibling_entry,
     warnings_out: list[str] | None = None,
+    participating_mod_ids: set | None = None,
 ) -> None:
     """Wire-up helper: decompose synth_data, run Format 3 expansion,
     repack synth_data["patches"] with the extended set.
@@ -463,6 +474,7 @@ def _expand_format3_into_synth_data(
         aggregated, signatures, db,
         vanilla_extractor=_vanilla_extractor,
         warnings_out=warnings_out,
+        participating_mod_ids=participating_mod_ids,
     )
     new_keys = set(aggregated.keys()) - pre_keys
     if new_keys or any(len(aggregated[k]) != len(
@@ -1523,12 +1535,17 @@ class ApplyWorker(QObject):
                 # pipeline doesn't need to know which side a change
                 # came from.
                 f3_warnings: list[str] = []
+                # Format 3 mods report their contributing mod ids
+                # here so persist_skip_summary can reset rows on a
+                # clean apply (H2 fix).
+                f3_participating: set[int] = set()
                 _expand_format3_into_synth_data(
                     synth_data, self._db,
                     self._vanilla_dir, self._game_dir,
                     self._get_vanilla_entry_content,
                     self._extract_sibling_entry,
-                    warnings_out=f3_warnings)
+                    warnings_out=f3_warnings,
+                    participating_mod_ids=f3_participating)
                 if f3_warnings:
                     # Same surfacing pattern v3.2.1's skipped-patches
                     # feature uses — InfoBar after Apply via the
@@ -1622,6 +1639,9 @@ class ApplyWorker(QObject):
                     # badge work, chunk 2A).
                     try:
                         participating = {m["mod_id"] for m in mod_summary}
+                        # Union in Format 3 contributors so their rows
+                        # also clear on a clean apply (H2 fix).
+                        participating |= f3_participating
                         persist_skip_summary(
                             self._db.connection, patch_skips, participating)
                     except Exception as _e:

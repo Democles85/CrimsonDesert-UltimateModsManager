@@ -72,6 +72,7 @@ def expand_format3_into_aggregated(
     db,
     vanilla_extractor: VanillaExtractor,
     warnings_out: list[str] | None = None,
+    participating_mod_ids: set | None = None,
 ) -> None:
     """For each enabled mod whose json_source is a Format 3 file,
     resolve its intents into v2-style change dicts and append to
@@ -116,6 +117,11 @@ def expand_format3_into_aggregated(
     _WHOLE_TABLE_TARGETS = {"iteminfo.pabgb", "skill.pabgb"}
     whole_table_intents: dict[str, list] = {}
     whole_table_mod_names: dict[str, list[str]] = {}
+    # Track contributing mod ids per whole-table target so the
+    # participating_mod_ids set picks them up on a successful
+    # batch dispatch , H2 fix for Format 3 mods that go through
+    # the whole-table path.
+    whole_table_mod_ids: dict[str, list[int]] = {}
 
     for mod_id, mod_name, json_source, _priority in rows:
         try:
@@ -180,6 +186,7 @@ def expand_format3_into_aggregated(
             whole_table_intents.setdefault(target, []).extend(
                 validation.supported)
             whole_table_mod_names.setdefault(target, []).append(mod_name)
+            whole_table_mod_ids.setdefault(target, []).append(mod_id)
             n_mods_changed += 1  # provisional; recounted below if no bytes
             files_touched.add(target)
             continue
@@ -222,6 +229,12 @@ def expand_format3_into_aggregated(
             c["_source_mod_id"] = mod_id
             c["_target_file"] = target
         aggregated.setdefault(target, []).extend(changes)
+        # Report this mod as a participant so persist_skip_summary
+        # resets its last_apply_skipped_count on a clean re-apply.
+        # Without this, Format 3 mods that were yellow once stayed
+        # yellow forever , H2 fix.
+        if participating_mod_ids is not None:
+            participating_mod_ids.add(mod_id)
         # Update summary counters for the apply-time log line.
         n_mods_changed += 1
         files_touched.add(target)
@@ -273,15 +286,23 @@ def expand_format3_into_aggregated(
                     f"from this game version's table."
                 )
             continue
-        # Stamp _target_file on the merged change so byte-mismatch
-        # skips reach the badge tooltip with the asset name attached.
-        # Per-mod _source_mod_id attribution is genuinely ambiguous
-        # here (one merged change represents N mods' intents), and
-        # stays deferred. The contributing-mods InfoBar warning
-        # already names the mods involved when extraction fails.
+        # Stamp _target_file plus the full list of contributing mod
+        # ids on the merged change. A single int can't represent N
+        # mods' shared intent, so we use _source_mod_ids (plural list)
+        # , persist_skip_summary fans out one row per id when the
+        # change byte-mismatches. H3 fix.
+        contrib_ids = list(whole_table_mod_ids.get(target, []))
         for c in changes:
             c["_target_file"] = target
+            if contrib_ids:
+                c["_source_mod_ids"] = list(contrib_ids)
         aggregated.setdefault(target, []).extend(changes)
+        # Whole-table dispatch produced bytes for this target , credit
+        # every contributing mod as a participant so persist_skip_summary
+        # resets their skip rows on a clean apply (H2 fix).
+        if participating_mod_ids is not None:
+            for mid in whole_table_mod_ids.get(target, []):
+                participating_mod_ids.add(mid)
         for c in changes:
             n_bytes_changed += len(c.get("patched", "")) // 2
         logger.info(
