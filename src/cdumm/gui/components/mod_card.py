@@ -382,7 +382,11 @@ class ModCard(CardWidget):
                 else {"bg": "#FEF3C7", "text": "#92400E", "border": "#FCD34D"}
             )
             skipped_badge.setStyleSheet(_pill_qss(_skip_colors))
-            skipped_badge.setCursor(Qt.CursorShape.WhatsThisCursor)
+            # Default arrow cursor: the badge is informational. The
+            # tooltip exposes the full skip detail; there's no click
+            # target. WhatsThisCursor (Faisal feedback 2026-05-04) was
+            # promising interactivity that doesn't exist , H4 fix.
+            skipped_badge.setCursor(Qt.CursorShape.ArrowCursor)
             tip_lines = [tr("tooltip.skipped_header", count=count)]
             try:
                 import json as _json
