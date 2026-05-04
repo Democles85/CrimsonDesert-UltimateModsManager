@@ -403,8 +403,16 @@ class ModCard(CardWidget):
                         f"• {head} , {reason}" if reason else f"• {head}")
                 if len(entries) > 8:
                     tip_lines.append(f"… +{len(entries) - 8} more")
-            except Exception:
-                pass
+            except Exception as _e:
+                # Bad JSON shouldn't crash the card render, but it
+                # SHOULD show up in logs , otherwise corrupt skip
+                # summaries are invisible to anyone debugging a
+                # 'badge shows but tooltip is empty' report. L1 fix.
+                import logging as _logging
+                _logging.getLogger(__name__).debug(
+                    "Failed to parse last_apply_skip_summary for "
+                    "mod %s: %s (raw=%r)",
+                    mod_id, _e, last_apply_skip_summary)
             tip_lines.append("")
             tip_lines.append(tr("tooltip.skipped_hint"))
             skipped_badge.setToolTip("\n".join(tip_lines))
