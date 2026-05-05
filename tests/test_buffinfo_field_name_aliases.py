@@ -1,6 +1,6 @@
 """Phase 3f follow-up: buffinfo intents using camelCase + leading-
 underscore field names (CDUMM PABGB schema convention) must apply
-the same as snake_case names (NattKh dialect convention).
+the same as snake_case names (field-names dialect convention).
 
 The format3 validator already accepts BOTH shapes via a 4-shape
 candidate chain (intent.field, _intent.field, snake_to_camel,
@@ -11,8 +11,8 @@ effect" , the worst possible failure mode.
 
 Real-world impact: any user who hand-authored a buffinfo Format 3
 mod using the CDUMM schema names they see in the conflict viewer
-(`_minLevel`, `_isBlocked`, etc.) hits this. NattKh-tool output
-uses snake_case so it works either way.
+(`_minLevel`, `_isBlocked`, etc.) hits this. The field-names
+dialect uses snake_case so it works either way.
 """
 from __future__ import annotations
 

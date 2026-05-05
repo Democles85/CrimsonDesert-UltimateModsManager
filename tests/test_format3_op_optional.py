@@ -1,9 +1,9 @@
-"""GitHub #66 (deadriver35): Adfaz / NattKh skill_inf_stamina_mod
-.field.json schema OMITS the 'op' key. CDUMM's parser was raising
-'intent #0 is missing required key op' on import, so the user
-couldn't even get past the import dialog.
+"""GitHub #66 (deadriver35): the skill_inf_stamina_mod .field.json
+schema OMITS the 'op' key. CDUMM's parser was raising 'intent #0
+is missing required key op' on import, so the user couldn't even
+get past the import dialog.
 
-The newer NattKh skill .field.json files use:
+The newer skill .field.json files use:
   entry, key, field, old, new  (NO 'op')
 
 The older DropSets variant uses:

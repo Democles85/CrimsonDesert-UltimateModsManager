@@ -1,4 +1,4 @@
-"""NattKh Format 3 (field-names) JSON mod handler.
+"""Format 3 (field-names) JSON mod handler.
 
 Format 3 is a high-level semantic mod format that uses entry
 names + field names + intent operations instead of raw byte
@@ -31,8 +31,8 @@ when:
   * the ``op`` is ``"set"``.
 
 Variable-length array fields (e.g., ``_list``), the friendly-
-name → schema-name translation layer NattKh uses internally
-(``drops`` → ``_list``), and ops other than ``"set"`` (``add_entry``,
+name → schema-name translation layer the upstream tool uses
+internally (``drops`` → ``_list``), and ops other than ``"set"`` (``add_entry``,
 ``remove``, ``append``, etc.) are deferred to later phases.
 """
 from __future__ import annotations
@@ -177,9 +177,8 @@ def _parse_intents_block(
             raise ValueError(
                 f"{label} intent #{i} is not a JSON object"
             )
-        # NattKh's newer skill .field.json variant drops 'op' since
-        # 'set' is implicit. We default to 'set' when absent. GitHub
-        # #66.
+        # The newer skill .field.json variant drops 'op' since 'set'
+        # is implicit. We default to 'set' when absent. GitHub #66.
         for required in ("entry", "key", "field"):
             if required not in raw:
                 raise ValueError(
@@ -218,14 +217,14 @@ def parse_format3_mod_targets(
 
     Accepts BOTH dialects of the Field-JSON v3 spec:
 
-    * **Singular** (original spec, FIELD_JSON_V3_SPEC.md from NattKh
+    * **Singular** (original spec, FIELD_JSON_V3_SPEC.md
       2026-04-24)::
 
           {"format": 3, "target": "iteminfo.pabgb",
            "intents": [...]}
 
-    * **Plural** (NattKh's newer multi-target export, e.g. Adfaz
-      Double Resource Buff)::
+    * **Plural** (newer multi-target export, e.g. Double Resource
+      Buff)::
 
           {"format": 3,
            "targets": [
@@ -470,7 +469,7 @@ LIST_WRITERS: dict[tuple[str, str], str] = {
         "iteminfo_writer.build_iteminfo_intent_change",
     ("iteminfo", "gimmick_tag_list"):
         "iteminfo_writer.build_iteminfo_intent_change",
-    # Skill whole-table writer (vendored NattKh skillinfo_parser).
+    # Skill whole-table writer (vendored skillinfo_parser).
     ("skill", "_useResourceStatList"):
         "skill_writer.build_skill_intent_change",
     ("skill", "_buffLevelList"):
@@ -597,7 +596,7 @@ def _classify_intent(
     if intent.field in fs_entries:
         return None
 
-    # Prefix + camelCase fallback lookup. NattKh-style mods use
+    # Prefix + camelCase fallback lookup. Field-names mods use
     # snake_case field names without the underscore prefix. The
     # schema/overrides use camelCase WITH the prefix (engine-internal
     # form, e.g. `_gimmickInfo`). Try four shapes in order:
@@ -791,7 +790,7 @@ def _field_walker_reachable(schema, target_field: str) -> bool:
     """
     from cdumm.semantic.pabgb_types import is_known_type
     # Build a candidate list: try the requested name first, then the
-    # underscore-prefixed variant (NattKh-naming → schema-naming).
+    # underscore-prefixed variant (mod-naming → schema-naming).
     candidates = [target_field]
     if not target_field.startswith("_"):
         candidates.append(f"_{target_field}")

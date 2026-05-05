@@ -1,5 +1,5 @@
-"""GitHub #66 follow-up + Faisal 2026-05-04 ZIP review: NattKh's
-newer Field-JSON dialect ships *multiple* targets per file:
+"""GitHub #66 follow-up + Faisal 2026-05-04 ZIP review: the newer
+Field-JSON dialect ships *multiple* targets per file:
 
     {
       "format": 3,
@@ -10,8 +10,8 @@ newer Field-JSON dialect ships *multiple* targets per file:
       ]
     }
 
-The original spec (FIELD_JSON_V3_SPEC.md from NattKh's reference)
-only documented the singular ``target: <str>`` + top-level
+The original spec (FIELD_JSON_V3_SPEC.md) only documented the
+singular ``target: <str>`` + top-level
 ``intents`` shape. The new ``targets: [{file, intents}]`` shape is a
 forward-compat extension. CDUMM's ``parse_format3_mod`` was hard-
 coded to the singular form and bombed at import with

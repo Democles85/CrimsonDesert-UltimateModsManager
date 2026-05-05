@@ -1,7 +1,7 @@
 # buffinfo.pabgb reverse-engineering notes
 
 Working notes for the multi-session task of building a Phase 3+
-buffinfo body decoder so NattKh-dialect Format 3 mods (e.g. Adfaz
+buffinfo body decoder so field-names dialect Format 3 mods (e.g.
 Double Resource Buff, Nexus 2276) that target
 ``buff_data_list[i].data.base.{...}`` can apply.
 
@@ -56,9 +56,10 @@ body_start +38?..    ??           Cross-check failed: in the
                                      and _sequencerFileName that the
                                      engine schema doesn't list.
 
-                                   Need an oracle (run NattKh's tool
-                                   on a known input, observe which
-                                   bytes change) to disambiguate.
+                                   Need an oracle (run a known-good
+                                   external tool on the same input,
+                                   observe which bytes change) to
+                                   disambiguate.
 ```
 
 ## Open question: are buff_data items here at all?
@@ -82,8 +83,8 @@ on a SINGLE intent should let us reverse the offset.
 
 * ``BuffinfoEntryHeader`` returns offsets for ``is_blocked_offset``,
   ``buff_data_count_offset``, and ``body_start``. Future fields
-  should also expose ``_offset`` annotations the same way NattKh's
-  ``characterinfo_full_parser.py`` does.
+  should also expose ``_offset`` annotations in the same shape as
+  ``characterinfo_full_parser.py``.
 
 * ``locate_buff_field(entry_bytes, field_path)`` is the eventual
   public API. Currently returns ``None`` for everything. Each new
@@ -115,13 +116,13 @@ order:
 
 Crucially: **the schema does NOT define BuffData (the list element
 type)**. _buffDataList is just a count u32; the actual list items
-live somewhere outside what the engine schema describes. NattKh's
-own ``pabgb_field_parsers.py:parse_buff_record`` (line 144) is a
-HEURISTIC SCANNER, not a structured parser , it just grep-scans
-the entry bytes for known stat hashes and rates.
+live somewhere outside what the engine schema describes. Existing
+external parsers (``pabgb_field_parsers.py:parse_buff_record``,
+line 144) use a HEURISTIC SCANNER, not a structured parser , just
+grep-scanning the entry bytes for known stat hashes and rates.
 
-That's why even NattKh's published tools don't ship a buffinfo
-editor: nobody public has the BuffData binary layout decoded.
+That's why no public buffinfo editor has shipped: the BuffData
+binary layout was undecoded.
 
 ### Sentinel 0x73e1c5ea is sub-structural, not item-bounding
 

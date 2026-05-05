@@ -185,7 +185,7 @@ def detect_json_patch(path: Path) -> dict | None:
 
 
 def is_natt_format_3(path: Path) -> bool:
-    """Return True if ``path`` is a NattKh-style Format 3 JSON mod.
+    """Return True if ``path`` is a field-names Format 3 JSON mod.
 
     Format 3 is a high-level semantic mod format that uses field
     names + entry keys instead of byte offsets. CDUMM doesn't fully

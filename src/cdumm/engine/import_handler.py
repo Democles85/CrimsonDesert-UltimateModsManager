@@ -359,7 +359,7 @@ def detect_format(path: Path) -> str:
     if suffix == ".json":
         if detect_json_patch(path) is not None:
             return "json_patch"
-        # NattKh's Format 3 (field-names + intents) lives in a .json
+        # Format 3 (field-names + intents) lives in a .json
         # but doesn't have a patches[] array, so the standard detector
         # rejects it. We return a dedicated format string so the
         # dispatch can emit a "coming in v3.3" message instead of the
@@ -2135,7 +2135,7 @@ def _import_from_extracted(
             if plain_result is not None:
                 return plain_result
 
-    # Format 3 (NattKh field-name) detection. The same JSON dropped as
+    # Format 3 (field-name) detection. The same JSON dropped as
     # a ZIP would land in `import_from_zip`'s Format 3 branch; without
     # this block, RAR/7z imports of the same mod errored with "no
     # recognized format". Source: Lovexvirus007's Can It Stack JSON V3
@@ -2509,7 +2509,7 @@ def import_from_zip(
                     _store_json_patches(db, result, jp_data, game_dir)
                 return result
 
-        # NattKh's Format 3 mods (field-names + intents) ship as a
+        # Format 3 mods (field-names + intents) ship as a
         # single .json. detect_json_patch above checks for a
         # 'patches' array — Format 3 doesn't have one, so it falls
         # through here. Catch it before the rest of the detectors so
@@ -2946,7 +2946,7 @@ def import_from_folder(
         if primary_result is not None:
             return primary_result
 
-    # Format 3 (NattKh field-names) detection — same fix as
+    # Format 3 (field-names) detection — same fix as
     # import_from_zip. detect_json_patches_all only matches files
     # with a 'patches' array; Format 3 uses 'intents' and falls
     # through. Catch it here before texture/PAZ scans so the user
@@ -3340,7 +3340,7 @@ def import_from_natt_format_3(
     json_path: Path, game_dir: Path, db: Database, snapshot: SnapshotManager, deltas_dir: Path,
     existing_mod_id: int | None = None,
 ) -> ModImportResult:
-    """Importer for NattKh's Format 3 (field-names + intents).
+    """Importer for Format 3 (field-names + intents).
 
     Parses the file, validates each intent against the PABGB schema
     + community-curated field_schema, and surfaces a precise summary
@@ -3363,8 +3363,8 @@ def import_from_natt_format_3(
         from cdumm.engine.format3_handler import (
             parse_format3_mod_targets, validate_intents,
         )
-        # Multi-target dialect (NattKh's newer .field.json export,
-        # Faisal 2026-05-04 ZIP review): one mod can declare several
+        # Multi-target dialect (newer .field.json export, Faisal
+        # 2026-05-04 ZIP review): one mod can declare several
         # .pabgb targets in a single file. parse_format3_mod_targets
         # returns one (target, intents) pair per declared target;
         # singular-shape files yield a 1-pair list.
@@ -3411,11 +3411,11 @@ def import_from_natt_format_3(
             for t, _, v in validations
         )
         result.error = (
-            f"NattKh Format 3 mod targeting {targets_summary}: none "
-            f"of the {total_intents} intent(s) can be applied yet.\n\n"
+            f"Format 3 mod targeting {targets_summary}: none of the "
+            f"{total_intents} intent(s) can be applied yet.\n\n"
             f"{per_target_summaries}\n\n"
-            f"Workaround: drop NattKh's offset-based JSON variant "
-            f"if they ship one. That format works in CDUMM today."
+            f"Workaround: use the offset-based JSON variant of this "
+            f"mod if one exists. That format works in CDUMM today."
         )
         return result
 
@@ -3432,7 +3432,7 @@ def import_from_natt_format_3(
     if persist_outcome is None:
         # Persistence failed — couldn't resolve target file in PAMTs
         result.error = (
-            f"NattKh Format 3 mod targeting {primary_target}: "
+            f"Format 3 mod targeting {primary_target}: "
             f"validated {total_supported} applicable intent(s), but "
             f"the target file '{primary_target}' couldn't be located "
             f"in your game's PAZ archives. Make sure the target name "

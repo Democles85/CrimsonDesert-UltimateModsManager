@@ -1,7 +1,7 @@
 """Skill Format 3 list-of-dict field writer.
 
-Uses the vendored NattKh skill parser at
-`src/cdumm/_vendor/nattkh_skillinfo_parser.py` (MPL-2.0).
+Uses the vendored skill parser at
+`src/cdumm/_vendor/skillinfo_parser.py`.
 
 Whole-table approach (mirrors iteminfo_writer): the parser is
 already verified byte-roundtrip on vanilla 1.0.0.4 skill.pabgb,
@@ -28,7 +28,7 @@ _cached_module: Any | None = None
 _load_attempted = False
 
 
-# Skill list-of-dict fields that NattKh's parser exposes. Mirrors
+# Skill list-of-dict fields the vendored parser exposes. Mirrors
 # the keys produced by `parse_skill_entry`.
 SUPPORTED_FIELDS = {
     "_useResourceStatList",
@@ -46,7 +46,7 @@ def _candidate_dirs() -> list[Path]:
 
 
 def _get_parser():
-    """Load nattkh_skillinfo_parser from the vendor dir, dev or frozen."""
+    """Load skillinfo_parser from the vendor dir, dev or frozen."""
     global _cached_module, _load_attempted
     if _load_attempted:
         return _cached_module
@@ -57,9 +57,9 @@ def _get_parser():
         try:
             if str(candidate) not in sys.path:
                 sys.path.insert(0, str(candidate))
-            import nattkh_skillinfo_parser as _mod
+            import skillinfo_parser as _mod
             _cached_module = _mod
-            logger.info("nattkh_skillinfo_parser loaded from %s", candidate)
+            logger.info("skillinfo_parser loaded from %s", candidate)
             return _cached_module
         except Exception as e:
             logger.debug(

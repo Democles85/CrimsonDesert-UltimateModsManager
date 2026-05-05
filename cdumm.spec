@@ -39,11 +39,11 @@ if os.path.isdir(_crimson_rs_dir):
         else:
             _crimson_rs_datas.append((full, 'cdumm/_vendor/crimson_rs'))
 
-# Vendored NattKh skillinfo_parser.py (MPL-2.0). Pure Python, just
-# bundle the .py file alongside crimson_rs. Loaded lazily by
+# Vendored skillinfo_parser.py. Pure Python, just bundle the .py
+# file alongside crimson_rs. Loaded lazily by
 # cdumm.engine.skill_writer.
 _skill_parser_py = os.path.join('src', 'cdumm', '_vendor',
-                                'nattkh_skillinfo_parser.py')
+                                'skillinfo_parser.py')
 if os.path.isfile(_skill_parser_py):
     _crimson_rs_datas.append((_skill_parser_py, 'cdumm/_vendor'))
 

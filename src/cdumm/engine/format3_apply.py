@@ -131,9 +131,9 @@ def expand_format3_into_aggregated(
                 continue
             # parse_format3_mod_targets returns one (target, intents)
             # pair per .pabgb file the mod modifies. Singular-shape
-            # files yield a 1-pair list; multi-target files (NattKh's
-            # newer dialect, e.g. Adfaz Double Resource Buff) yield
-            # one pair per ``targets[i]`` entry.
+            # files yield a 1-pair list; multi-target files (newer
+            # dialect, e.g. Double Resource Buff) yield one pair per
+            # ``targets[i]`` entry.
             target_pairs = parse_format3_mod_targets(jp)
         except (ValueError, OSError):
             # Either not Format 3 (v2 path already handled it), or
@@ -285,7 +285,7 @@ def expand_format3_into_aggregated(
                     f"Format 3 mod(s) {', '.join(repr(n) for n in contributing_mods)} "
                     f"produced 0 byte changes for '{target}'. "
                     f"Possible causes: the vendored writer (crimson_rs / "
-                    f"NattKh skill parser) failed to load, or all "
+                    f"vendored skill parser) failed to load, or all "
                     f"target item/skill keys in the mod are missing "
                     f"from this game version's table."
                 )
@@ -353,7 +353,7 @@ def _intents_to_v2_changes(
     has_cdumm_schema = has_schema(table_name)
     # Tables without a CDUMM PABGB schema are still processable when
     # ALL their intents target a registered list writer (e.g. skill.pabgb
-    # via the vendored NattKh skillinfo_parser). The writer is the
+    # via the vendored skillinfo_parser). The writer is the
     # source of truth for the binary layout.
     if not has_cdumm_schema:
         all_writer_routable = bool(intents) and all(
@@ -535,7 +535,7 @@ def _intents_to_v2_changes(
         if iteminfo_change is not None:
             out.append(iteminfo_change)
 
-    # Same for skill: NattKh's skillinfo_parser needs the .pabgh
+    # Same for skill: the skillinfo_parser needs the .pabgh
     # header to walk records, so we forward `vanilla_header` here.
     if skill_batch:
         from cdumm.engine.skill_writer import (
@@ -563,8 +563,8 @@ def _buffinfo_field_candidates(field: str) -> list[str]:
     """
     if "[" in field or "." in field:
         # Item-path leaves are already snake_case in the parser; we
-        # don't fan out aliases for them yet. (NattKh-tool output is
-        # the only known producer of these paths.)
+        # don't fan out aliases for them yet. (The field-names
+        # dialect is the only known producer of these paths.)
         return [field]
     candidates = [field, f"_{field}"]
     from cdumm.engine.format3_handler import _snake_to_camel
@@ -658,7 +658,7 @@ def _buffinfo_intents_to_changes(
         entry_bytes = bytes(vanilla_body[entry_off:entry_end])
         # Mirror the validator's 4-shape field-name lookup so a path
         # like ``_minLevel`` (CDUMM schema convention) resolves the
-        # same as ``min_level`` (NattKh dialect convention). Without
+        # same as ``min_level`` (field-names dialect convention). Without
         # this, intents would validate-then-fail-to-apply and present
         # to users as "imported, enabled, no effect".
         located = None
@@ -839,7 +839,7 @@ def _resolve_write_pos(
             return None
         return abs_off, size, fmt
 
-    # Field-name lookup: NattKh-style mods use snake_case without
+    # Field-name lookup: field-names mods use snake_case without
     # the leading underscore; the schema/overrides use camelCase
     # with prefix (`_gimmickInfo`). Mirror the validator's four-shape
     # lookup at format3_handler.py: exact / +underscore /
