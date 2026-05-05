@@ -4306,12 +4306,29 @@ class RevertWorker(QObject):
                             logger.info("Restored implicit backup: %s", implicit_file)
                             reverted += 1
 
-            # Restore any PAMTs and PAZs that differ from vanilla
-            for d in sorted(self._game_dir.iterdir()):
-                if not d.is_dir() or not d.name.isdigit() or len(d.name) != 4:
-                    continue
-                if int(d.name) >= 36:
-                    continue  # overlay dirs handled separately
+            # Restore any PAMTs and PAZs that differ from vanilla.
+            # GitHub #71 (jscrump1278): this loop reads every vanilla
+            # backup PAZ (some 100+MB) AND the matching live PAZ for a
+            # bytes-equal check, with NO progress updates between 90%
+            # and 91%. On a typical 36-dir install that's ~7GB of disk
+            # I/O while the progress bar appears frozen, leading users
+            # to assume the worker hung. Emit per-dir progress so the
+            # bar moves and add a fast hash-comparison short-circuit
+            # before the full bytes-compare.
+            vanilla_dirs = sorted(
+                d for d in self._game_dir.iterdir()
+                if d.is_dir() and d.name.isdigit() and len(d.name) == 4
+                and int(d.name) < 36
+            )
+            for vd_idx, d in enumerate(vanilla_dirs):
+                # The percent stays at 90 (orphan cleanup is at 91),
+                # but the status message changes per dir so users see
+                # the worker is actively making progress (not hung).
+                self.progress_updated.emit(
+                    90,
+                    f"Verifying {d.name}/ "
+                    f"({vd_idx + 1}/{len(vanilla_dirs)})...")
+                _yield_gil()
                 for fname in ["0.pamt", "0.paz"]:
                     rel = f"{d.name}/{fname}"
                     vanilla_bytes = self._get_vanilla_bytes(rel)
@@ -4320,11 +4337,27 @@ class RevertWorker(QObject):
                         if fpath.exists():
                             actual_size = fpath.stat().st_size
                             if actual_size == len(vanilla_bytes):
-                                # Same size — check content
-                                if fpath.read_bytes() != vanilla_bytes:
-                                    txn.stage_file(rel, vanilla_bytes)
-                                    logger.info("Restored %s (content diff)", rel)
-                                    reverted += 1
+                                # Same size — check content. For large
+                                # files, hash both first; full bytes-
+                                # equal is much slower than two SHA256
+                                # passes once the page cache is warm.
+                                if actual_size > 5 * 1024 * 1024:
+                                    import hashlib
+                                    live_h = hashlib.sha256(
+                                        fpath.read_bytes()).digest()
+                                    van_h = hashlib.sha256(
+                                        vanilla_bytes).digest()
+                                    if live_h != van_h:
+                                        txn.stage_file(rel, vanilla_bytes)
+                                        logger.info(
+                                            "Restored %s (content diff)", rel)
+                                        reverted += 1
+                                else:
+                                    if fpath.read_bytes() != vanilla_bytes:
+                                        txn.stage_file(rel, vanilla_bytes)
+                                        logger.info(
+                                            "Restored %s (content diff)", rel)
+                                        reverted += 1
                             elif actual_size != len(vanilla_bytes):
                                 txn.stage_file(rel, vanilla_bytes)
                                 logger.info("Restored %s (size diff)", rel)
