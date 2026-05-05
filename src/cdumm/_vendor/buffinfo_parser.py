@@ -447,11 +447,15 @@ def locate_buff_field(
             return None
         if n != 0:
             return None
-        if tail == ".absent_flag":
+        if tail in (".absent_flag", ".leading_lookup"):
             entry = parse_entry(entry_bytes)
             header = parse_item_header(
                 entry_bytes, entry.buff_data_list_offset)
-            return header.absent_flag_offset, 1, "u8"
+            if tail == ".absent_flag":
+                return header.absent_flag_offset, 1, "u8"
+            # ``leading_lookup`` is the public schema name for the
+            # 4-byte prefix integer at the start of each item.
+            return header.prefix_id_offset, 4, "u32"
         return None
 
     return None

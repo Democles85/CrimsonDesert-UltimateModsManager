@@ -86,6 +86,31 @@ def test_locate_buff_field_resolves_first_item_absent_flag():
     assert raw[offset] == 0x01
 
 
+def test_locate_buff_field_resolves_first_item_leading_lookup():
+    """``buff_data_list[0].leading_lookup`` is the public schema
+    name for the 4-byte prefix integer that opens each item."""
+    from cdumm._vendor.buffinfo_parser import locate_buff_field
+
+    name_bytes = b"X"
+    raw = (
+        struct.pack("<I", 1)
+        + struct.pack("<I", len(name_bytes)) + name_bytes
+        + bytes([0])
+        + struct.pack("<I", 1)
+        + struct.pack("<I", 0xCAFEBABE)
+        + bytes([0x00])
+        + struct.pack("<I", 1) + struct.pack("<I", 5)
+        + struct.pack("<I", 0) + bytes([0])
+        + struct.pack("<I", 0) * 3 + bytes([0, 0])
+    )
+    res = locate_buff_field(raw, "buff_data_list[0].leading_lookup")
+    assert res is not None
+    offset, width, dtype = res
+    assert width == 4
+    assert dtype == "u32"
+    assert struct.unpack_from("<I", raw, offset)[0] == 0xCAFEBABE
+
+
 def test_locate_buff_field_returns_none_for_higher_indices():
     """``buff_data_list[3].absent_flag`` etc. need the variant size
     table to walk past items 0..2. Until that lands, return None."""
