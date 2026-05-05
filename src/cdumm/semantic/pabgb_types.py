@@ -1,3 +1,20 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Portions of the table-walking logic and the StageInfo / FieldInfo /
+# RegionInfo / CharacterInfo helper definitions in this file are
+# ported from:
+#   NattKh/CRIMSON-DESERT-SAVE-EDITOR-AND-GAME-MODS (MPL-2.0 at time
+#   of port)
+#   https://github.com/NattKh/CRIMSON-DESERT-SAVE-EDITOR-AND-GAME-MODS
+#   CrimsonGameMods/{stageinfo,fieldinfo,regioninfo,characterinfo_mount}_parser.py
+# Other portions (item_info type definitions) are ported from:
+#   Potter420/crimson-rs (MIT)
+#   https://github.com/potter420/crimson-rs
+# Copyright (c) 2026 RicePaddySoftware (MPL-2.0 portions)
+# License text for the MPL-2.0 portions is bundled at
+# src/cdumm/_vendor/crimson_rs/LICENSE_MPL2.
 """PABGB binary type walker — consumes bytes for any PABGB field type.
 
 Extends the schema-driven parser to handle the variable-length and
