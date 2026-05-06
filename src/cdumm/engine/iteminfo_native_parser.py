@@ -550,7 +550,10 @@ def _read_PrefabData(r: _Reader) -> dict:
     prefab_names = r.carray(_Reader.u32)
     equip_slot_list = r.carray(_Reader.u32)
     is_craft_material = r.u8()
-    tribe_gender_list = [_read_PrefabDataTribe(r) for _ in range(r.u32())]
+    tribe_count = r.u32()
+    tribe_gender_list = [
+        _read_PrefabDataTribe(r, i, tribe_count) for i in range(tribe_count)
+    ]
     return {
         "tag_name_hash": tag_name_hash,
         "prefab_names": prefab_names,
@@ -570,7 +573,7 @@ def _write_PrefabData(w: _Writer, v: dict) -> None:
         _write_PrefabDataTribe(w, elem)
 
 
-def _read_PrefabDataTribe(r: _Reader) -> dict:
+def _read_PrefabDataTribe(r: _Reader, elem_index: int = 0, total_count: int = 1) -> dict:
     """One element of PrefabData.tribe_gender_list under post-1.0.4.1 layout.
 
     Two byte-level shapes coexist in the live binary, distinguished by the
@@ -605,6 +608,11 @@ def _read_PrefabDataTribe(r: _Reader) -> dict:
     discriminator) and a MEDIUM-confidence per-element greedy parser for
     the C list.
     """
+    # In multi-tribe records (total_count > 1), every tribe element is Shape A
+    # with the per-element index encoded in the first u32 (hash_a). The
+    # zero-discriminator only fits tribe[0] of single-tribe records.
+    if elem_index > 0 or total_count > 1:
+        return _read_PrefabDataTribe_shapeA(r)
     if r.data[r.pos:r.pos + 4] == b"\x00\x00\x00\x00":
         return _read_PrefabDataTribe_shapeA(r)
     return _read_PrefabDataTribe_shapeB(r)
