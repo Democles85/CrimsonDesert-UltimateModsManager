@@ -473,18 +473,67 @@ def _write_InspectAction(w: _Writer, v: dict) -> None:
     w.cstring(v["catch_target_socket_name"])
 
 
-def _read_ItemInfoSharpnessData(r: _Reader) -> dict:
+def _read_ItemInfoSharpnessData(r: _Reader, dsi_type: int = 15) -> dict:
+    """Post-1.0.4.1 sharpness layout (per SHARPNESS_findings.md).
+
+    Two on-disk shapes coexist, dispatched by ``default_sub_item.type_id``:
+
+    * **W** (dsi_type == 15): 13-byte W-header + u32 stat_count + N*12 stats
+      + 3-byte tail. Empty = 20 bytes.
+    * **PW** (dsi_type == 0): 13-byte P-prefix prepended to W. Empty = 33
+      bytes, N stats = 33 + 12*N.
+
+    For unknown dsi_type values we default to W (no P-prefix) since the
+    fixture only ever pairs PW with dsi=0 and W with dsi=15.
+    """
+    p_prefix: bytes | None = None
+    if dsi_type == 0:
+        # PW shape: 13-byte P-prefix
+        p_prefix = bytes(r.data[r.pos:r.pos + 13])
+        r.pos += 13
+    # W-header: 13 bytes (u8 unk_a + u16 max_sharpness + u32 craft_tool_info
+    # + 6 trailing bytes; trailing bytes empirically zero, treated as opaque)
+    w_unk_a = r.u8()
+    max_sharpness = r.u16()
+    craft_tool_info = r.u32()
+    w_trailing = bytes(r.data[r.pos:r.pos + 6])
+    r.pos += 6
+    # carray<EnchantStatChange> stat_list_static: u32 count + 12*N
+    stat_count = r.u32()
+    stat_list: list[dict] = []
+    for _ in range(stat_count):
+        stat_list.append({"stat": r.u32(), "change_mb": r.i64()})
+    # 3-byte tail (always zero in fixture; opaque)
+    tail = bytes(r.data[r.pos:r.pos + 3])
+    r.pos += 3
     return {
-        "max_sharpness": r.u16(),
-        "craft_tool_info": r.u16(),
-        "stat_data": _read_EnchantStatData(r),
+        "shape": "PW" if dsi_type == 0 else "W",
+        "p_prefix": p_prefix,
+        "w_unk_a": w_unk_a,
+        "max_sharpness": max_sharpness,
+        "craft_tool_info": craft_tool_info,
+        "w_trailing": w_trailing,
+        "stat_list": stat_list,
+        "tail": tail,
     }
 
 
 def _write_ItemInfoSharpnessData(w: _Writer, v: dict) -> None:
-    w.u16(v["max_sharpness"])
-    w.u16(v["craft_tool_info"])
-    _write_EnchantStatData(w, v["stat_data"])
+    if v.get("shape") == "PW":
+        prefix = v.get("p_prefix") or b"\x00" * 13
+        w.buf += bytes(prefix)
+    w.u8(v.get("w_unk_a", 0))
+    w.u16(v.get("max_sharpness", 0))
+    w.u32(v.get("craft_tool_info", 0))
+    trailing = v.get("w_trailing") or b"\x00" * 6
+    w.buf += bytes(trailing)
+    stat_list = v.get("stat_list") or []
+    w.u32(len(stat_list))
+    for s in stat_list:
+        w.u32(s["stat"])
+        w.i64(s["change_mb"])
+    tail = v.get("tail") or b"\x00" * 3
+    w.buf += bytes(tail)
 
 
 def _read_ItemBundleData(r: _Reader) -> dict:
@@ -1372,7 +1421,14 @@ def _read_item(r: _Reader) -> dict:
         elif kind == "carray":
             out[name] = r.carray(spec[2])
         elif kind == "struct":
-            out[name] = spec[2](r)
+            if name == "sharpness_data":
+                # Sharpness shape (W vs PW) depends on default_sub_item.type_id
+                # per SHARPNESS_findings.md: dsi=0 -> PW, else W.
+                dsi = out.get("default_sub_item") or {}
+                dsi_type = int(dsi.get("type_id", 15))
+                out[name] = _read_ItemInfoSharpnessData(r, dsi_type)
+            else:
+                out[name] = spec[2](r)
         elif kind == "optional":
             out[name] = _read_optional(r, spec[2])
         else:
