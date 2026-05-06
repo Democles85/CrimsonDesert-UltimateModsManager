@@ -691,6 +691,23 @@ def _read_PrefabDataTribe(r: _Reader, elem_index: int = 0, total_count: int = 1)
                 raise ValueError(
                     f"Shape A consumed {r.pos - snap} bytes (likely Family E)"
                 )
+            # Boundary check: same as Shape A2.
+            if total_count == 1 and elem_index == 0:
+                gvp_needle = b"\x00\x00\x80\x3f\x00\x00\x80\x3f\x00\x00\x80\x3f"
+                if r.data[r.pos + 8:r.pos + 20] != gvp_needle:
+                    nearby = r.data.find(
+                        gvp_needle, r.pos, min(r.pos + 256, len(r.data))
+                    )
+                    if nearby > 0:
+                        end = nearby - 8
+                        if end > r.pos:
+                            extra = bytes(r.data[r.pos:end])
+                            r.pos = end
+                            return {
+                                "shape": "A_padded",
+                                "inner": result,
+                                "extra": extra,
+                            }
             return result
         except Exception:
             r.pos = snap
@@ -1042,6 +1059,9 @@ def _write_PrefabDataTribe(w: _Writer, v: dict) -> None:
         w.carray(v["list_a"], _write_TribeRef)
         w.carray(v["list_b"], _write_TribeRef)
         w.carray(v["list_c"], _write_TribeStat)
+    elif shape == "A_padded":
+        _write_PrefabDataTribe(w, v["inner"])
+        w.buf += bytes(v["extra"])
     elif shape == "A2":
         _write_PrefabDataTribe_shapeA2(w, v)
     elif shape == "A2_opaque":
