@@ -392,6 +392,38 @@ class SettingsPage(SmoothScrollArea):
         hint.setContentsMargins(6, 0, 6, 0)
         self._layout.addWidget(hint)
 
+        # ── Mod storage location (cdmods_path override) ──────────
+        # Lets users redirect CDMods/ (sources, vanilla snapshots,
+        # deltas, cdumm.db) off the game drive. Displays the resolved
+        # path and a Change... button that opens a folder picker. The
+        # actual on-disk migration of existing contents lives in a
+        # follow-up task; this section just persists the override.
+        self._cdmods_path_card = GroupHeaderCardWidget(self._container)
+        self._cdmods_path_card.setTitle(tr("settings.cdmods_path_section"))
+        self._cdmods_path_card.setBorderRadius(8)
+
+        cdmods_widget = QWidget()
+        cdmods_row = QHBoxLayout(cdmods_widget)
+        cdmods_row.setContentsMargins(0, 0, 0, 0)
+        cdmods_row.setSpacing(8)
+        # Read-only label showing the currently resolved path. We don't
+        # use a LineEdit because we don't want users to free-type a path
+        # and bypass the writability check the picker enforces.
+        self._cdmods_path_label = BodyLabel("")
+        self._cdmods_path_label.setWordWrap(True)
+        cdmods_row.addWidget(self._cdmods_path_label, 1)
+        self._cdmods_change_btn = PushButton(tr("settings.cdmods_path_change"))
+        self._cdmods_change_btn.setMinimumWidth(140)
+        self._cdmods_change_btn.clicked.connect(self._on_change_cdmods_path)
+        cdmods_row.addWidget(self._cdmods_change_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._cdmods_path_card.addGroup(
+            FluentIcon.FOLDER,
+            tr("settings.cdmods_path_row_title"),
+            tr("settings.cdmods_path_row_desc"),
+            cdmods_widget,
+        )
+        self._layout.addWidget(self._cdmods_path_card)
+
         # ── About / Patch Notes ──────────────────────────────────
         # Lets users re-open the patch notes any time after install,
         # not just on the one-shot version-upgrade auto-launch. Shows
@@ -538,6 +570,11 @@ class SettingsPage(SmoothScrollArea):
         # Sync the Login/Sign-out button label to the saved-key state.
         if hasattr(self, "_refresh_sso_button"):
             self._refresh_sso_button()
+
+        # CDMods/ storage location label — must reflect any saved
+        # cdmods_path override AND fall back to the default game_dir
+        # path when no override is set.
+        self._refresh_cdmods_path_label()
 
         # PrivateBin
         if hasattr(self, '_privatebin_instance_input'):
@@ -1188,3 +1225,82 @@ class SettingsPage(SmoothScrollArea):
             layout.insertWidget(index, new_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         self._nexus_status_badge = new_badge
         self._nexus_status.setText(text)
+
+    # ------------------------------------------------------------------
+    # CDMods/ storage location override (Task 3.3)
+    # ------------------------------------------------------------------
+
+    def _refresh_cdmods_path_label(self) -> None:
+        """Display the currently resolved CDMods/ root path. Falls back
+        to a friendly placeholder when no game_dir is wired up yet."""
+        if not hasattr(self, "_cdmods_path_label"):
+            return
+        from cdumm.engine.cdmods_paths import get_cdmods_root
+        if self._game_dir is None:
+            self._cdmods_path_label.setText(
+                tr("settings.cdmods_path_unconfigured"))
+            self._cdmods_path_label.setToolTip("")
+            return
+        try:
+            resolved = get_cdmods_root(self._config, Path(self._game_dir))
+        except Exception as e:
+            logger.debug("cdmods_path resolve failed: %s", e)
+            self._cdmods_path_label.setText(
+                tr("settings.cdmods_path_unconfigured"))
+            return
+        self._cdmods_path_label.setText(str(resolved))
+        self._cdmods_path_label.setToolTip(str(resolved))
+
+    def _on_change_cdmods_path(self) -> None:
+        """Open the folder picker, validate writability, then persist
+        the chosen path via ``_on_cdmods_path_changed``."""
+        import os
+        from cdumm.engine.cdmods_paths import get_cdmods_root
+
+        # Seed the dialog at the current resolved path so the user lands
+        # somewhere familiar instead of the home directory.
+        start_dir = ""
+        try:
+            if self._game_dir is not None:
+                start_dir = str(get_cdmods_root(self._config, Path(self._game_dir)))
+        except Exception:
+            start_dir = ""
+
+        picked = QFileDialog.getExistingDirectory(
+            self,
+            tr("settings.cdmods_path_picker_title"),
+            start_dir,
+        )
+        if not picked:
+            return  # user cancelled
+        picked_path = Path(picked)
+        if not os.access(str(picked_path), os.W_OK):
+            InfoBar.error(
+                title=tr("settings.cdmods_path_not_writable_title"),
+                content=tr("settings.cdmods_path_not_writable_body"),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self.window(),
+            )
+            return
+        self._on_cdmods_path_changed(picked_path)
+
+    def _on_cdmods_path_changed(self, new_path: Path) -> None:
+        """Persist the chosen ``new_path`` to the ``cdmods_path`` config
+        key and refresh the displayed label. Migration of existing
+        CDMods/ contents is a follow-up task; for now we surface a
+        placeholder InfoBar so users know the move hasn't happened yet.
+        """
+        if self._config is None:
+            logger.warning("cdmods_path change requested with no config")
+            return
+        self._config.set("cdmods_path", str(new_path))
+        logger.info("cdmods_path override set to %s", new_path)
+        self._refresh_cdmods_path_label()
+        InfoBar.info(
+            title=tr("settings.cdmods_path_migration_pending_title"),
+            content=tr("settings.cdmods_path_migration_pending_body"),
+            duration=5000,
+            position=InfoBarPosition.TOP,
+            parent=self.window(),
+        )
