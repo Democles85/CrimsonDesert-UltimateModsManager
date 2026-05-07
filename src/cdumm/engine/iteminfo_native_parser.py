@@ -695,9 +695,22 @@ def _read_PrefabDataTribe(r: _Reader, elem_index: int = 0, total_count: int = 1)
             if total_count == 1 and elem_index == 0:
                 gvp_needle = b"\x00\x00\x80\x3f\x00\x00\x80\x3f\x00\x00\x80\x3f"
                 if r.data[r.pos + 8:r.pos + 20] != gvp_needle:
-                    nearby = r.data.find(
-                        gvp_needle, r.pos, min(r.pos + 512, len(r.data))
-                    )
+                    # Find first GVP needle with sane (1-10) preceding count
+                    nearby = -1
+                    sp = r.pos
+                    se = min(r.pos + 1500, len(r.data))
+                    while True:
+                        cand = r.data.find(gvp_needle, sp, se)
+                        if cand < 0:
+                            break
+                        if cand - 8 >= r.pos:
+                            cnt = struct.unpack_from(
+                                "<I", r.data, cand - 8
+                            )[0]
+                            if 1 <= cnt <= 10:
+                                nearby = cand
+                                break
+                        sp = cand + 1
                     if nearby > 0:
                         end = nearby - 8
                         if end > r.pos:
@@ -756,9 +769,22 @@ def _read_PrefabDataTribe(r: _Reader, elem_index: int = 0, total_count: int = 1)
                     # Either GVP is empty (count=0) or we under-consumed.
                     # If a needle exists nearby (within 256 bytes), forward
                     # walk to it.
-                    nearby = r.data.find(
-                        gvp_needle, r.pos, min(r.pos + 512, len(r.data))
-                    )
+                    # Find first GVP needle with sane (1-10) preceding count
+                    nearby = -1
+                    sp = r.pos
+                    se = min(r.pos + 1500, len(r.data))
+                    while True:
+                        cand = r.data.find(gvp_needle, sp, se)
+                        if cand < 0:
+                            break
+                        if cand - 8 >= r.pos:
+                            cnt = struct.unpack_from(
+                                "<I", r.data, cand - 8
+                            )[0]
+                            if 1 <= cnt <= 10:
+                                nearby = cand
+                                break
+                        sp = cand + 1
                     if nearby > 0:
                         end = nearby - 8
                         if end > r.pos:
@@ -799,7 +825,21 @@ def _shapeA2_forward_walk(r: _Reader) -> dict | None:
     # latching onto the GVP of the NEXT record's PrefabData entry, which
     # would push parser cursor beyond the current record boundary).
     scan_end = min(snap + 1500, len(r.data))
-    needle_pos = r.data.find(needle, snap, scan_end)
+    # Find needle that also has a SANE GVP count (1-10) at -8 bytes,
+    # to filter out false-positive needles inside tribe data.
+    search_pos = snap
+    needle_pos = -1
+    while True:
+        cand = r.data.find(needle, search_pos, scan_end)
+        if cand < 0:
+            break
+        # Validate: GVP count u32 at cand-8 should be small (1-10).
+        if cand - 8 >= snap:
+            cnt = struct.unpack_from("<I", r.data, cand - 8)[0]
+            if 1 <= cnt <= 10:
+                needle_pos = cand
+                break
+        search_pos = cand + 1
     if needle_pos < 0:
         return None
     # GVP entry layout: u32 tag_hash + 3*f32 scale + carray<u32> + carray<u32> + u8
