@@ -6,6 +6,58 @@ import re as _re
 
 _CATEGORY_PREFIX_RE = _re.compile(r"^(?P<cat>[^/]+?)\s*/\s*(?P<rest>.+)$")
 
+_PRESET_TAG_RE = _re.compile(r"^\[(?P<tag>[^\]]+)\]\s+")
+_PRESET_PERCENT_RE = _re.compile(r"^-?\d+(\.\d+)?%$")
+_PRESET_KNOWN_VOCAB = frozenset(
+    s.lower()
+    for s in (
+        "Default", "Infinite", "Off", "On", "Vanilla",
+        "None", "Min", "Max", "Low", "Mid", "High",
+    )
+)
+
+
+def detect_preset_groups(patches: list[dict]) -> dict[str, list[int]] | None:
+    """Detect a preset selector encoded in V2 byte-patch labels.
+
+    Mod authors prefix every patch label with `[Tag]` to indicate the
+    preset variant it belongs to (e.g. `[0%] foo`, `[25%] foo`,
+    `[100%] foo`). When the full patch list forms such a family, return
+    {tag: [patch_index, ...]} preserving discovery order. Otherwise
+    return None.
+
+    A patch list qualifies only if EVERY label carries a `[Tag]` prefix,
+    there are 2+ distinct tags, and the tag set looks like a preset
+    family by one of:
+      * all tags are percent values (`-?\\d+(\\.\\d+)?%`),
+      * all tags are in the known vocab (Default, Off, On, Min/Max...),
+      * 3+ tags with identical patch counts (catches arbitrary preset
+        names like 'Lazy Run / Marathon / Sprint').
+    """
+    groups: dict[str, list[int]] = {}
+    for i, patch in enumerate(patches):
+        label = str(patch.get("label", ""))
+        m = _PRESET_TAG_RE.match(label)
+        if not m:
+            return None
+        tag = m.group("tag").strip()
+        if not tag:
+            return None
+        groups.setdefault(tag, []).append(i)
+
+    if len(groups) < 2:
+        return None
+
+    tags = list(groups)
+    if all(_PRESET_PERCENT_RE.match(t) for t in tags):
+        return groups
+    if all(t.lower() in _PRESET_KNOWN_VOCAB for t in tags):
+        return groups
+    counts = {len(idxs) for idxs in groups.values()}
+    if len(tags) >= 3 and len(counts) == 1:
+        return groups
+    return None
+
 
 def _group_variants_by_category_prefix(
     variants: list[dict],
