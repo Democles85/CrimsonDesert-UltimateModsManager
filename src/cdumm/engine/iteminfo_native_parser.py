@@ -163,17 +163,87 @@ class _Writer:
 # ── Public API stubs (filled in by the record walker below) ──────────────
 
 
+def _looks_like_record_header(data: bytes, p: int) -> bool:
+    """Heuristic: does ``p`` look like the start of an iteminfo record?
+
+    Pattern: u32 key (>=1, <2e6), u32 string_key_len (4..100), then
+    ``string_key_len`` ASCII-printable bytes (letters/digits/underscore/
+    hyphen), followed by u8 is_blocked (0 or 1) and u64 max_stack_count
+    (1..1e8). Used by the streaming parser to bound rec_end when prefab
+    parsing over-consumes and we have no .pabgh index to consult.
+    """
+    if p < 0 or p + 17 > len(data):
+        return False
+    key = struct.unpack_from("<I", data, p)[0]
+    if key == 0 or key > 2_000_000:
+        return False
+    n = struct.unpack_from("<I", data, p + 4)[0]
+    if n < 4 or n > 100:
+        return False
+    if p + 8 + n + 9 > len(data):
+        return False
+    sk = data[p + 8:p + 8 + n]
+    for b in sk:
+        if not (
+            (0x41 <= b <= 0x5A)  # A-Z
+            or (0x61 <= b <= 0x7A)  # a-z
+            or (0x30 <= b <= 0x39)  # 0-9
+            or b in (0x5F, 0x2D)  # _ -
+        ):
+            return False
+    blocked = data[p + 8 + n]
+    if blocked > 1:
+        return False
+    max_stack = struct.unpack_from("<Q", data, p + 8 + n + 1)[0]
+    if max_stack < 1 or max_stack > 100_000_000:
+        return False
+    return True
+
+
+def _find_next_record_start(
+    data: bytes, search_start: int, search_end: int
+) -> int:
+    """Scan [search_start, search_end) for the first plausible record
+    header. Returns -1 if none found. Used as a streaming-mode rec_end
+    approximation for the prefab opaque-salvage path."""
+    if search_end > len(data):
+        search_end = len(data)
+    p = search_start
+    while p < search_end:
+        if _looks_like_record_header(data, p):
+            return p
+        p += 1
+    return -1
+
+
 def parse_iteminfo_from_bytes(data: bytes) -> list[dict]:
     """Parse an entire iteminfo.pabgb body to a list of item dicts.
 
     Walks records back-to-back from offset 0 to len(data). Each
     record self-describes its size via the schema, no .pabgh index
-    needed at parse time.
+    needed at parse time. When a record's prefab walker silently
+    over-consumes and the post-prefab boundary check needs an
+    rec_end anchor, sniff the next plausible record header and use
+    it as the bound.
     """
     items: list[dict] = []
-    r = _Reader(data, 0)
-    while r.pos < len(data):
+    pos = 0
+    while pos < len(data):
+        rec_start = pos
+        # Sniff the next record header within a generous bound so the
+        # prefab opaque-salvage path has an rec_end. Search starts a
+        # bit past the smallest plausible record size to avoid matching
+        # the current record's own embedded text.
+        sniff_start = rec_start + 200
+        sniff_end = min(rec_start + 30000, len(data))
+        next_start = _find_next_record_start(
+            data, sniff_start, sniff_end
+        )
+        if next_start < 0:
+            next_start = len(data)
+        r = _Reader(data, rec_start, rec_end=next_start)
         items.append(_read_item(r))
+        pos = r.pos
     return items
 
 
@@ -619,6 +689,7 @@ def _read_PrefabData(r: _Reader) -> dict:
     is_craft_material = r.u8()
     tribe_count = r.u32()
     tribe_gender_list: list[dict] = []
+    tribe_opaque = False
     snap_before_tribes = r.pos
     try:
         for i in range(tribe_count):
@@ -635,11 +706,17 @@ def _read_PrefabData(r: _Reader) -> dict:
                 tribe_gender_list.append(_read_PrefabDataTribe(r, i, tribe_count))
         else:
             tribe_gender_list = [opaque]
+            tribe_opaque = True
     return {
         "tag_name_hash": tag_name_hash,
         "prefab_names": prefab_names,
         "equip_slot_list": equip_slot_list,
         "is_craft_material": is_craft_material,
+        # Preserve the original tribe_count u32 so the writer reproduces
+        # it byte-for-byte even when tribe_gender_list collapses into a
+        # single opaque blob via _shapeA2_forward_walk.
+        "tribe_count": tribe_count,
+        "tribe_opaque": tribe_opaque,
         "tribe_gender_list": tribe_gender_list,
     }
 
@@ -649,7 +726,13 @@ def _write_PrefabData(w: _Writer, v: dict) -> None:
     w.carray(v["prefab_names"], _Writer.u32)
     w.carray(v["equip_slot_list"], _Writer.u32)
     w.u8(v["is_craft_material"])
-    w.u32(len(v["tribe_gender_list"]))
+    # When the tribe block was opaque-salvaged, restore the original
+    # tribe_count u32 (the opaque bytes already encode all tribes) so
+    # round-trip is byte-identical. Otherwise emit list length as before.
+    if v.get("tribe_opaque"):
+        w.u32(v.get("tribe_count", len(v["tribe_gender_list"])))
+    else:
+        w.u32(len(v["tribe_gender_list"]))
     for elem in v["tribe_gender_list"]:
         _write_PrefabDataTribe(w, elem)
 
