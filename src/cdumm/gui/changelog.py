@@ -13,6 +13,13 @@ from cdumm.i18n import tr
 # Changelog entries — newest first. Add new versions at the top.
 CHANGELOG = [
     {
+        "version": "3.2.13",
+        "date": "2026-05-08",
+        "notes": [
+            "<b>Format 3 iteminfo cooltime mods actually take effect in game.</b> v3.2.12 shipped a defensive guard that refused cooltime / unk_post_cooltime_a / unk_post_cooltime_b intents on records where the parser was misaligned (preventing the crash but leaving the cooltime values stuck at vanilla). v3.2.13 fixes the parser layout itself: the trailing 13-byte block (i64 + u32 + u8) that the pre-fix parser misattributed to <code>sharpness_data.p_prefix</code> on PW shape actually belongs to <code>default_sub_item</code> when its <code>type_id &lt; 14</code> (the populated form). With the corrected schema, <code>cooltime</code>, <code>unk_post_cooltime_a</code>, and <code>unk_post_cooltime_b</code> read at the right on-disk byte offsets across all 6235 vanilla records (verified byte-perfect round-trip), and Format 3 intents on these fields land where mod authors target them. Confirmed against hhkbble's My_ItemBuffs_Mod on item 1001250 (thief gloves) — the modded cooltime bytes are now byte-identical to a known-good standalone packaging of the same content. The defensive guard from v3.2.12 is removed.",
+        ],
+    },
+    {
         "version": "3.2.12",
         "date": "2026-05-08",
         "notes": [
