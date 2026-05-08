@@ -13,6 +13,13 @@ from cdumm.i18n import tr
 # Changelog entries — newest first. Add new versions at the top.
 CHANGELOG = [
     {
+        "version": "3.2.12",
+        "date": "2026-05-08",
+        "notes": [
+            "<b>Hotfix: Format 3 iteminfo intents on cooltime / unk_post_cooltime_a / unk_post_cooltime_b no longer crash the game on launch.</b> Bug confirmed against hhkbble's My_ItemBuffs_Mod targeting item 1001250 (thief gloves cooldown). The native iteminfo parser's reported byte offsets for cooltime, unk_post_cooltime_a, and unk_post_cooltime_b are 13 bytes earlier on-disk than where mod authors actually target those fields. The parser is byte-roundtrip consistent within itself (an upstream variable-length field consumes fewer bytes than reality, balancing out), but a Format 3 intent on these fields would write at the parser's claimed offset, which is 13 bytes too early on disk. The bytes that get overwritten belong to other game data the engine validates on load, and the engine crashes during initial scan. As a defensive hotfix, the writer now refuses these specific cooltime-family intents on records detected as misaligned (opaque prefab_data_list, OR non-zero unk_post_cooltime_a/b values, both reliable markers of the misalignment), with a clear log line naming which intent was dropped. Other intents on the same mod (max_stack_count, enchant_data_list, etc.) still apply. The full parser layout fix is on the queue for a subsequent build; this hotfix prevents the crash.",
+        ],
+    },
+    {
         "version": "3.2.11",
         "date": "2026-05-08",
         "notes": [
