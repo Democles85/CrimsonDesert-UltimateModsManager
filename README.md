@@ -156,6 +156,32 @@ pyinstaller cdumm.spec --noconfirm
 
 ---
 
+## Storage
+
+By default, CDUMM keeps all of its working data (imported mods, vanilla snapshots, overlays, caches) in a `CDMods/` folder next to the game install, so for a Steam install that lands at `E:\SteamLibrary\steamapps\common\Crimson Desert\CDMods\`. This keeps everything next to the game it belongs to and survives moves of the game folder.
+
+### Changing the location
+
+If you want CDMods on a different drive (smaller SSD, dedicated mods drive, network share), open **Settings**, scroll to **Mod storage location**, and click **Change...**. Pick any folder on a writable drive. CDUMM updates the override and migrates the existing `CDMods/` contents to the new path before the next apply.
+
+### Migration safety
+
+The migration is atomic with checksum verification. CDUMM copies every file from the old location to the new one, verifies each copy by hash, and only then removes the source. While this is in progress, a `.cdumm_migration_in_progress` marker file lives at the destination.
+
+If a migration is interrupted partway through (network drive drops out, drive runs out of space, power loss, anything), the marker file stays behind. On the next launch CDUMM sees the marker and surfaces a recovery prompt instead of treating the half-copied destination as the live data. The original source is left intact until every byte at the destination has been verified, so an interrupted migration never loses data.
+
+### Junction workaround (advanced)
+
+If you would rather keep the path stable at the default `<game>\CDMods\` while the actual data lives on another drive, you can use a directory junction:
+
+```
+mklink /J "E:\SteamLibrary\steamapps\common\Crimson Desert\CDMods" "D:\CDMods"
+```
+
+This is supported but not the recommended path for most users. The Settings override is simpler, has explicit migration with checksums, and survives game folder moves better than a junction does. Use the junction only if you have a specific reason (for example, sharing one CDMods folder across multiple game installs).
+
+---
+
 ## For Mod Authors
 
 CDUMM supports these fields in `modinfo.json`:

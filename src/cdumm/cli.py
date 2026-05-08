@@ -12,9 +12,18 @@ import logging
 import sys
 from pathlib import Path
 
+from cdumm.engine.cdmods_paths import get_cdmods_root
 from cdumm.platform import IS_WINDOWS, app_data_dir
 
 APP_DATA_DIR = app_data_dir()
+
+
+def _cdmods_root(game_dir: Path, db=None) -> Path:
+    """Return the CDMods root, honoring config override when a db is open."""
+    if db is None:
+        return get_cdmods_root(None, game_dir)
+    from cdumm.storage.config import Config
+    return get_cdmods_root(Config(db), game_dir)
 
 
 def _attach_console():
@@ -57,7 +66,7 @@ def _resolve_game_dir(override: str | None = None) -> Path | None:
 
 def _open_db(game_dir: Path):
     from cdumm.storage.database import Database
-    db_path = game_dir / "CDMods" / "cdumm.db"
+    db_path = get_cdmods_root(None, game_dir) / "cdumm.db"
     if not db_path.exists():
         print(f"Error: database not found at {db_path}", file=sys.stderr)
         sys.exit(1)
@@ -74,7 +83,7 @@ def cmd_list_mods(args):
 
     db = _open_db(game_dir)
     from cdumm.engine.mod_manager import ModManager
-    mgr = ModManager(db, game_dir / "CDMods" / "deltas")
+    mgr = ModManager(db, _cdmods_root(game_dir, db) / "deltas")
     mods = mgr.list_mods(args.type)
 
     if args.json:
@@ -113,7 +122,7 @@ def cmd_set_enabled(args):
 
     db = _open_db(game_dir)
     from cdumm.engine.mod_manager import ModManager
-    mgr = ModManager(db, game_dir / "CDMods" / "deltas")
+    mgr = ModManager(db, _cdmods_root(game_dir, db) / "deltas")
 
     # Verify mod exists
     mods = mgr.list_mods()
@@ -149,7 +158,7 @@ def cmd_cleanup_duplicates(args):
               file=sys.stderr)
         sys.exit(1)
 
-    db_path = game_dir / "CDMods" / "cdumm.db"
+    db_path = get_cdmods_root(None, game_dir) / "cdumm.db"
     if not db_path.exists():
         print(f"Error: database not found at {db_path}", file=sys.stderr)
         sys.exit(1)
@@ -191,7 +200,7 @@ def cmd_cleanup_duplicates(args):
         db.close()
         return
 
-    deltas_dir = game_dir / "CDMods" / "deltas"
+    deltas_dir = _cdmods_root(game_dir, db) / "deltas"
     mgr = ModManager(db, deltas_dir)
     results = apply_cleanup(mgr)
     print(f"Cleanup complete. Removed "
@@ -205,12 +214,17 @@ def cmd_apply(args):
         print("Error: cannot find game directory. Use --game-dir.", file=sys.stderr)
         sys.exit(1)
 
-    db_path = game_dir / "CDMods" / "cdumm.db"
+    db_path = get_cdmods_root(None, game_dir) / "cdumm.db"
     if not db_path.exists():
         print(f"Error: database not found at {db_path}", file=sys.stderr)
         sys.exit(1)
 
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    # Open DB just to read the cdmods_path override for vanilla_dir.
+    from cdumm.storage.database import Database as _Db
+    _bootstrap_db = _Db(db_path)
+    _bootstrap_db.initialize()
+    vanilla_dir = _cdmods_root(game_dir, _bootstrap_db) / "vanilla"
+    _bootstrap_db.close()
 
     # ApplyWorker needs PySide6 for QObject/Signal — import it
     from cdumm.engine.apply_engine import ApplyWorker
@@ -262,12 +276,17 @@ def cmd_launch_game(args):
               file=sys.stderr)
         sys.exit(1)
 
-    db_path = game_dir / "CDMods" / "cdumm.db"
+    db_path = get_cdmods_root(None, game_dir) / "cdumm.db"
     if not db_path.exists():
         print(f"Error: database not found at {db_path}", file=sys.stderr)
         sys.exit(1)
 
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    # Open DB just to read cdmods_path override.
+    from cdumm.storage.database import Database as _Db
+    _bootstrap_db = _Db(db_path)
+    _bootstrap_db.initialize()
+    vanilla_dir = _cdmods_root(game_dir, _bootstrap_db) / "vanilla"
+    _bootstrap_db.close()
 
     from cdumm.engine.apply_engine import ApplyWorker
 
@@ -326,7 +345,7 @@ def cmd_bisect(args):
     from cdumm.engine.binary_search import DeltaDebugSession
     from cdumm.engine.apply_engine import ApplyWorker
 
-    mgr = ModManager(db, game_dir / "CDMods" / "deltas")
+    mgr = ModManager(db, _cdmods_root(game_dir, db) / "deltas")
 
     if args.action == "start":
         # Optionally filter to specific mod IDs
@@ -344,8 +363,8 @@ def cmd_bisect(args):
         for mod_id, enabled in config.items():
             mgr.set_enabled(mod_id, enabled)
 
-        vanilla_dir = game_dir / "CDMods" / "vanilla"
-        db_path = game_dir / "CDMods" / "cdumm.db"
+        vanilla_dir = _cdmods_root(game_dir, db) / "vanilla"
+        db_path = get_cdmods_root(None, game_dir) / "cdumm.db"
         worker = ApplyWorker(game_dir, vanilla_dir, db_path, force_outdated=False)
         worker.progress_updated.connect(lambda pct, msg: print(f"[{pct:3d}%] {msg}", file=sys.stderr))
         worker.run()
@@ -384,8 +403,8 @@ def cmd_bisect(args):
                     mgr.set_enabled(mod_id, False)
                 else:
                     mgr.set_enabled(mod_id, enabled)
-            vanilla_dir = game_dir / "CDMods" / "vanilla"
-            db_path = game_dir / "CDMods" / "cdumm.db"
+            vanilla_dir = _cdmods_root(game_dir, db) / "vanilla"
+            db_path = get_cdmods_root(None, game_dir) / "cdumm.db"
             worker = ApplyWorker(game_dir, vanilla_dir, db_path, force_outdated=False)
             worker.progress_updated.connect(lambda pct, msg: print(f"[{pct:3d}%] {msg}", file=sys.stderr))
             worker.run()
@@ -400,8 +419,8 @@ def cmd_bisect(args):
             config = session.start_round()
             for mod_id, enabled in config.items():
                 mgr.set_enabled(mod_id, enabled)
-            vanilla_dir = game_dir / "CDMods" / "vanilla"
-            db_path = game_dir / "CDMods" / "cdumm.db"
+            vanilla_dir = _cdmods_root(game_dir, db) / "vanilla"
+            db_path = get_cdmods_root(None, game_dir) / "cdumm.db"
             worker = ApplyWorker(game_dir, vanilla_dir, db_path, force_outdated=False)
             worker.progress_updated.connect(lambda pct, msg: print(f"[{pct:3d}%] {msg}", file=sys.stderr))
             worker.run()

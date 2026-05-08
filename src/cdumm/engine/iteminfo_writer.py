@@ -1,24 +1,27 @@
 """Iteminfo Format 3 list-of-dict field writer.
 
-Uses the vendored crimson_rs Rust extension (NattKh's parser) to
-parse the full iteminfo.pabgb table to dicts, apply Format 3
+Uses CDUMM's native iteminfo parser (cdumm.engine.iteminfo_native_parser)
+to parse the full iteminfo.pabgb table to dicts, apply Format 3
 intents in-memory, and serialize the result back to bytes.
 
 Whole-table approach: the iteminfo binary is 5+ MB with 6300+
-records and inter-record offset/index dependencies. Per-record
-serialize would require crimson_rs to expose record boundaries,
-which it doesn't. Whole-table parse + apply + serialize processes
-the full vanilla file in ~0.3 seconds.
+records and inter-record offset/index dependencies. Whole-table
+parse + apply + serialize processes the full vanilla file in a
+few seconds in Python.
 
 Bug from UnLuckyLust on GitHub #55: enchant_data_list and other
 list-of-dict fields on iteminfo were skipped at validation time
-with a "list writer needed" message. Now writable.
+with a "list writer needed" message. Now writable. v3.2.10 swapped
+the parser to a clean-room native implementation that handles the
+post-2026-04-29 game patch layout.
 """
 from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from cdumm.engine.crimson_rs_loader import get_crimson_rs
+from cdumm.engine.iteminfo_native_parser import (
+    parse_iteminfo_from_bytes, serialize_iteminfo,
+)
 
 if TYPE_CHECKING:
     from cdumm.engine.format3_handler import Format3Intent
@@ -26,8 +29,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Iteminfo fields the writer accepts. crimson_rs's ItemInfo dict
-# carries all of these as native Python types we can replace
+# Iteminfo fields the writer accepts. The native parser's ItemInfo
+# dict carries all of these as native Python types we can replace
 # wholesale via dict assignment. List shapes match the JSON
 # Format 3 intent's `new` value verbatim.
 SUPPORTED_FIELDS = {
@@ -53,11 +56,11 @@ SUPPORTED_FIELDS = {
 
 
 def _resolve_field_name(intent_field: str, item: dict) -> Optional[str]:
-    """Map a Format 3 intent field name to a key in crimson_rs's
-    ItemInfo dict, or None if no match.
+    """Map a Format 3 intent field name to a key in the native
+    parser's ItemInfo dict, or None if no match.
 
     Field-names dialect exports use snake_case-without-underscore-
-    prefix (`enchant_data_list`, `is_blocked`); crimson_rs's
+    prefix (`enchant_data_list`, `is_blocked`); the parser's
     TypedDict matches that convention. Other tools may emit
     schema-style underscore-prefixed camelCase (`_isBlocked`); we
     bridge both.
@@ -76,6 +79,66 @@ def _resolve_field_name(intent_field: str, item: dict) -> Optional[str]:
     return None
 
 
+def _resolve_path_target(
+    item: dict, path: str,
+) -> Optional[tuple]:
+    """Walk a Format 3 dotted/indexed path on a parsed ItemInfo dict.
+
+    Path syntax: ``field``, ``field.subfield``, ``field[N]``,
+    ``field[N].subfield``, ``a.b[N].c.d``. Returns
+    ``(parent_container, final_segment)`` so the caller can do
+    ``parent[final_segment] = new_value`` (works whether parent is
+    a dict and segment is a key, or parent is a list and segment is
+    an int index).
+
+    Returns None if any segment fails to resolve (missing dict key,
+    list index out of range, type mismatch).
+
+    Used by the iteminfo writer to apply Format 3 intents that
+    target nested struct sub-fields. Bug confirmed 2026-05-08
+    against gmVIP233 / niyaruza prefab_data_list[N].tribe_gender_list
+    and floozo drop_default_data.X paths.
+    """
+    import re
+    # Tokenize: identifier OR [N]
+    tokens: list[tuple[str, object]] = []
+    for m in re.finditer(r"([A-Za-z_]\w*)|\[(\d+)\]", path):
+        name, idx = m.groups()
+        if name is not None:
+            tokens.append(("key", name))
+        else:
+            tokens.append(("idx", int(idx)))
+    if not tokens:
+        return None
+
+    cur: object = item
+    for kind, val in tokens[:-1]:
+        try:
+            if kind == "key":
+                # First-segment key may need camelCase / underscore
+                # bridging via _resolve_field_name for round-1 lookup.
+                if isinstance(cur, dict) and val not in cur:
+                    resolved = _resolve_field_name(str(val), cur)
+                    if resolved is None:
+                        return None
+                    cur = cur[resolved]
+                else:
+                    cur = cur[val]  # type: ignore[index]
+            else:
+                cur = cur[val]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            return None
+
+    last_kind, last_val = tokens[-1]
+    # Final-segment key bridging: same dialect handling as multi-segment
+    if last_kind == "key" and isinstance(cur, dict) and last_val not in cur:
+        resolved = _resolve_field_name(str(last_val), cur)
+        if resolved is not None:
+            return (cur, resolved)
+        return None
+    return (cur, last_val)
+
+
 def build_iteminfo_intent_change(
     vanilla_body: bytes,
     intents: "list[Format3Intent]",
@@ -83,20 +146,15 @@ def build_iteminfo_intent_change(
     """Apply all provided intents to a parsed copy of vanilla
     iteminfo.pabgb and return a single whole-file v2 change dict.
 
-    Returns None if crimson_rs is unavailable, no intents touched
-    a real record, or all intents failed (so the caller can fall
-    back to the regular per-intent path).
+    Returns None if no intents touched a real record or all intents
+    failed (so the caller can fall back to the regular per-intent
+    path).
 
     Per-intent failures (unknown key, unsupported field) are logged
     and skipped; surviving intents still produce their effect.
     """
-    crimson_rs = get_crimson_rs()
-    if crimson_rs is None:
-        logger.warning("iteminfo writer unavailable (crimson_rs not loaded)")
-        return None
-
     try:
-        items = crimson_rs.parse_iteminfo_from_bytes(vanilla_body)
+        items = parse_iteminfo_from_bytes(vanilla_body)
     except Exception as e:
         logger.error("iteminfo parse failed: %s", e, exc_info=True)
         return None
@@ -126,6 +184,73 @@ def build_iteminfo_intent_change(
                 intent.op, intent.key, intent.field)
             continue
         item = by_key[intent.key]
+        # Defensive guard: the parser's cooltime / unk_post_cooltime_a /
+        # unk_post_cooltime_b offsets are 13 bytes off-disk for records
+        # where some upstream variable-length field consumes fewer bytes
+        # than reality. The parser is byte-roundtrip consistent within
+        # itself, but a Format 3 intent on those fields would write at
+        # the parser's claimed offset (13 bytes too early), corrupting
+        # other game data and crashing the engine on launch.
+        # Bug confirmed 2026-05-08 against hhkbble's My_ItemBuffs_Mod
+        # on item 1001250 (thief gloves cooltime).
+        # Heuristic: when unk_post_cooltime_a or unk_post_cooltime_b
+        # holds a non-zero value, the parser misread those bytes from
+        # an upstream field. Records where both are zero AND prefab
+        # parsed cleanly are aligned correctly. Until the parser's
+        # layout is fully corrected, refuse cooltime-family intents on
+        # records that fail this alignment check. Other intents
+        # (max_stack_count, enchant_data_list, etc.) still apply.
+        if intent.field in ("cooltime", "unk_post_cooltime_a",
+                              "unk_post_cooltime_b"):
+            misaligned = False
+            if isinstance(item.get("prefab_data_list"), dict) \
+                    and item["prefab_data_list"].get("_opaque"):
+                misaligned = True
+            else:
+                # Non-zero unk_post_cooltime_a/b is the marker that the
+                # parser read those 8 bytes from a wrong on-disk
+                # position (a high-value u64 from an upstream field).
+                # Vanilla cooltime values are small (milliseconds), so
+                # a non-zero unk field reaching into u64 territory
+                # almost certainly means misalignment.
+                if (item.get("unk_post_cooltime_a", 0) != 0
+                        or item.get("unk_post_cooltime_b", 0) != 0):
+                    misaligned = True
+            if misaligned:
+                skipped_field += 1
+                logger.warning(
+                    "iteminfo writer: refusing intent on key=%d "
+                    "field=%r — parser cooltime offset is 13 bytes "
+                    "off-disk for this record (upstream field "
+                    "alignment issue). Writing here would crash the "
+                    "game on launch. Other intents on this mod "
+                    "still apply.",
+                    intent.key, intent.field)
+                continue
+        # Nested path (dotted / indexed): walk the parsed dict to the
+        # assignment target. Used for prefab_data_list[N].xxx,
+        # drop_default_data.xxx, etc. The path-resolver returns
+        # (parent_container, final_segment) for assignment.
+        if "." in intent.field or "[" in intent.field:
+            target = _resolve_path_target(item, intent.field)
+            if target is None:
+                skipped_field += 1
+                logger.warning(
+                    "iteminfo writer: nested path %r did not resolve "
+                    "for key=%d, skipping (segment missing or index "
+                    "out of range)", intent.field, intent.key)
+                continue
+            parent, last_seg = target
+            try:
+                parent[last_seg] = intent.new
+                applied += 1
+            except (KeyError, IndexError, TypeError) as e:
+                logger.warning(
+                    "iteminfo writer: nested-path assignment on "
+                    "key=%d field=%r failed: %s",
+                    intent.key, intent.field, e)
+            continue
+
         # Resolve field name: try direct (snake_case-no-prefix as the
         # field-names dialect emits) first, then underscore-stripped +
         # snake-case of camelCase for schema-style names like
@@ -160,7 +285,7 @@ def build_iteminfo_intent_change(
         return None
 
     try:
-        new_bytes = crimson_rs.serialize_iteminfo(items)
+        new_bytes = serialize_iteminfo(items)
     except Exception as e:
         logger.error("iteminfo serialize failed: %s", e, exc_info=True)
         return None

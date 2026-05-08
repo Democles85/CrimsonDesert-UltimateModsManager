@@ -19,38 +19,89 @@ import logging
 import shutil
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import struct
 
 from cdumm.archive.paz_parse import parse_pamt, PazEntry
 from cdumm.archive.paz_repack import repack_entry_bytes, _save_timestamps
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
 
-def fix_xml_format(data: bytes) -> bytes:
-    """Fix XML for Crimson Desert's parser: UTF-8 BOM, no XML declaration, CRLF.
+def fix_xml_format(
+    data: bytes,
+    vanilla_reference: bytes | None = None,
+) -> bytes:
+    """Conform modded XML bytes to the vanilla file's shape.
 
-    The game requires: UTF-8 BOM prefix, no <?xml ...?> declaration, CRLF line
-    endings. Mod tools often export with LF, no BOM, and an XML declaration that
-    crashes the game's parser.
+    Without a vanilla reference, returns data unchanged. Earlier
+    revisions of this function unconditionally added a UTF-8 BOM,
+    stripped the ``<?xml ...?>`` declaration, and forced CRLF line
+    endings, on the premise that "the game requires UTF-8 BOM, no
+    XML declaration, CRLF line endings." That premise was wrong:
+    vanilla XMLs in Crimson Desert 1.05.x are inconsistent — some
+    have a UTF-8 BOM (e.g. renderpassraytracing.xml), some do not
+    (e.g. largescaleplacementinfo.xml has no BOM and uses mixed
+    line endings). Forcing every modded XML into a single shape
+    corrupted files that vanilla didn't actually want shaped that
+    way. Bug confirmed 2026-05-08 with Enhanced Internal Graphics
+    V2.8 (Nexus 651): launching the game with the mod applied
+    crashed before the title screen because CDUMM had added a BOM
+    to ``largescaleplacementinfo.xml`` which the engine's parser
+    rejected. Other mod managers (DMM, JMM) ship the mod author's
+    bytes verbatim and the same mod loads.
+
+    With a vanilla reference, the function makes only minimal,
+    targeted adjustments to match vanilla:
+
+      * BOM presence: add or strip so modded matches vanilla.
+      * XML declaration presence: strip ``<?xml ...?>`` if vanilla
+        has none. Do NOT add one if vanilla has one but mod doesn't,
+        because no Crimson Desert vanilla XML observed so far ships
+        a declaration; the strip-only direction is the documented
+        engine expectation.
+
+    Line endings are NEVER normalized — the mod author's bytes are
+    preserved. Vanilla itself uses mixed line endings in some
+    files, so a uniform CRLF (or LF) rewrite would diverge from
+    vanilla on those files.
     """
+    if vanilla_reference is None:
+        return data
+
+    vanilla_has_bom = vanilla_reference.startswith(b'\xef\xbb\xbf')
+    vanilla_body = (
+        vanilla_reference[3:] if vanilla_has_bom else vanilla_reference)
+    vanilla_has_decl = vanilla_body.lstrip().startswith(b'<?xml')
+
     fixed = data
-    # Strip any leading BOM first so the declaration check below sees
-    # the actual XML content. Without this, files that already have
-    # `BOM + <?xml ...?>` keep their declaration forever — the game's
-    # parser then crashes on what looks like a "fixed" file. Idempotent.
-    if fixed.startswith(b'\xef\xbb\xbf'):
+
+    # Match BOM presence to vanilla.
+    has_bom = fixed.startswith(b'\xef\xbb\xbf')
+    if vanilla_has_bom and not has_bom:
+        fixed = b'\xef\xbb\xbf' + fixed
+    elif not vanilla_has_bom and has_bom:
         fixed = fixed[3:]
-    # Remove XML declaration if present
-    if fixed.startswith(b'<?xml'):
-        nl = fixed.find(b'\n')
-        if nl >= 0:
-            fixed = fixed[nl + 1:]
-    # Add UTF-8 BOM
-    fixed = b'\xef\xbb\xbf' + fixed
-    # Normalize line endings to CRLF
-    fixed = fixed.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+
+    # Strip XML declaration only if vanilla has none.
+    if not vanilla_has_decl:
+        if fixed.startswith(b'\xef\xbb\xbf'):
+            bom_prefix = b'\xef\xbb\xbf'
+            tail = fixed[3:]
+        else:
+            bom_prefix = b''
+            tail = fixed
+        if tail.lstrip().startswith(b'<?xml'):
+            nl = tail.find(b'\n')
+            if nl >= 0:
+                tail = tail[nl + 1:]
+            fixed = bom_prefix + tail
+
     return fixed
 
 
@@ -100,7 +151,12 @@ def detect_crimson_browser(path: Path) -> dict | None:
     return None
 
 
-def convert_to_paz_mod(manifest: dict, game_dir: Path, work_dir: Path) -> Path | None:
+def convert_to_paz_mod(
+    manifest: dict,
+    game_dir: Path,
+    work_dir: Path,
+    config: "Config | None" = None,
+) -> Path | None:
     """Convert a Crimson Browser mod to a standard PAZ mod directory.
 
     Copies vanilla PAZ files, repacks each loose file into the copy,
@@ -251,7 +307,7 @@ def convert_to_paz_mod(manifest: dict, game_dir: Path, work_dir: Path) -> Path |
 
         # Use vanilla PAMT for entry lookup — the current game PAMT may have
         # modified comp_sizes from other mods, which would produce wrong offsets.
-        vanilla_pamt = game_dir / "CDMods" / "vanilla" / dir_name / "0.pamt"
+        vanilla_pamt = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / "0.pamt"
         pamt_path = vanilla_pamt if vanilla_pamt.exists() else game_paz_dir / "0.pamt"
         # Always use game directory for PAZ file paths — vanilla backup may
         # not have all PAZ files (only those that were modified and backed up).
@@ -314,7 +370,7 @@ def convert_to_paz_mod(manifest: dict, game_dir: Path, work_dir: Path) -> Path |
             paz_src = Path(entry.paz_file)
             if str(paz_src) not in paz_copies:
                 # Prefer vanilla backup over current game PAZ
-                vanilla_paz = game_dir / "CDMods" / "vanilla" / dir_name / paz_src.name
+                vanilla_paz = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / paz_src.name
                 copy_src = vanilla_paz if vanilla_paz.exists() else paz_src
                 paz_dst = work_dir / dir_name / paz_src.name
                 paz_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -329,13 +385,43 @@ def convert_to_paz_mod(manifest: dict, game_dir: Path, work_dir: Path) -> Path |
             # Read the modified file
             plaintext = source_file.read_bytes()
 
-            # Fix XML files that mod tools export with wrong formatting.
-            if entry.path.lower().endswith('.xml') and plaintext[:1] != b'\xef':
-                fixed = fix_xml_format(plaintext)
+            # Match the modded XML's shape to vanilla so the engine's
+            # parser accepts it (BOM presence + declaration presence).
+            # Reading vanilla bytes per-entry is the only way to know
+            # what shape the engine actually wants for this file —
+            # different vanilla XMLs use different shapes. See
+            # ``fix_xml_format`` docstring for the full rationale.
+            if entry.path.lower().endswith('.xml'):
+                # Prefer the vanilla backup PAZ over the live game PAZ:
+                # the live PAZ may already have been modified by other
+                # mods so its bytes for this entry would not be vanilla.
+                vanilla_xml_bytes: bytes | None = None
+                vanilla_paz_path = (
+                    get_cdmods_root(config, game_dir)
+                    / "vanilla" / dir_name / paz_src.name
+                )
+                vanilla_source = (
+                    vanilla_paz_path
+                    if vanilla_paz_path.exists()
+                    else paz_src
+                )
+                try:
+                    from cdumm.engine.json_patch_handler import (
+                        _extract_from_paz,
+                    )
+                    vanilla_xml_bytes = _extract_from_paz(
+                        entry, paz_path=str(vanilla_source))
+                except Exception as e:
+                    logger.debug(
+                        "Could not read vanilla bytes for %s "
+                        "(skipping shape match): %s",
+                        inner_path, e)
+                fixed = fix_xml_format(plaintext, vanilla_xml_bytes)
                 if fixed != plaintext:
                     plaintext = fixed
-                    logger.info("Fixed XML formatting for %s (BOM/line endings/declaration)",
-                                inner_path)
+                    logger.info(
+                        "Adjusted XML shape for %s to match vanilla "
+                        "(BOM/declaration)", inner_path)
 
             # Detect if the original PAZ entry is actually encrypted
             # even when entry.encrypted says False (heuristic misses non-XML files)
