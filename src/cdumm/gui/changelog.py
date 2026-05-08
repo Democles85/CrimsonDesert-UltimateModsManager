@@ -13,6 +13,13 @@ from cdumm.i18n import tr
 # Changelog entries — newest first. Add new versions at the top.
 CHANGELOG = [
     {
+        "version": "3.2.11",
+        "date": "2026-05-08",
+        "notes": [
+            "<b>Hotfix: Format 3 iteminfo mods with nested-field paths now actually apply.</b> v3.2.10's release notes claimed nested PrefabData paths were handled by the new native parser. The parser does round-trip those paths byte-perfect on read+write, but the writer's <code>_resolve_field_name</code> only accepted FLAT field names and the validator rejected any field with a dot in it. So mods using <code>prefab_data_list[N].tribe_gender_list</code> (gmVIP233's Marni armor, niyaruza's kliff_Wears_Damiane_Armor) and <code>drop_default_data.add_socket_material_item_list</code> / <code>drop_default_data.use_socket</code> (floozo's cloak) imported as 'none of N intents can be applied' even on v3.2.10. Apologies for the confusion in the prior changelog. The writer now ships a path-walker that resolves dotted/indexed paths to the assignment target inside the parsed item dict, the validator allows these paths through, and the apply path force-batches them into the iteminfo writer the same way list-of-dict intents are batched.",
+        ],
+    },
+    {
         "version": "3.2.10",
         "date": "2026-05-08",
         "notes": [

@@ -596,9 +596,23 @@ def _intents_to_v2_changes(
     # iteminfo intents through the writer when any list intent is
     # present so they compose in one parsed-dict pass. Bug from
     # systematic-debugging round on test_iteminfo_mixed_intents.
+    # Iteminfo nested paths the native writer's path-resolver can
+    # walk (prefab_data_list[N].xxx, drop_default_data.xxx,
+    # gimmick_visual_prefab_data_list[N].xxx). These don't appear in
+    # LIST_WRITERS because their field names are dynamic per-record,
+    # but the writer handles them in its parsed-dict pass.
+    def _is_iteminfo_nested_path(field: str) -> bool:
+        return bool(field) and (
+            field.startswith("prefab_data_list[")
+            or field.startswith("drop_default_data.")
+            or field.startswith("gimmick_visual_prefab_data_list[")
+        )
+
     iteminfo_force_batch = (
         table_name == "iteminfo" and any(
-            (table_name, i.field) in LIST_WRITERS for i in intents
+            (table_name, i.field) in LIST_WRITERS
+            or _is_iteminfo_nested_path(i.field)
+            for i in intents
         )
     )
     skill_force_batch = (
@@ -622,7 +636,8 @@ def _intents_to_v2_changes(
             continue
         # Per-list-writer-only path (no primitives mixed in).
         if (table_name == "iteminfo"
-                and (table_name, intent.field) in LIST_WRITERS):
+                and ((table_name, intent.field) in LIST_WRITERS
+                     or _is_iteminfo_nested_path(intent.field))):
             iteminfo_batch.append(intent)
             continue
         if (table_name == "skill"

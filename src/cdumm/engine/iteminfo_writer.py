@@ -79,6 +79,66 @@ def _resolve_field_name(intent_field: str, item: dict) -> Optional[str]:
     return None
 
 
+def _resolve_path_target(
+    item: dict, path: str,
+) -> Optional[tuple]:
+    """Walk a Format 3 dotted/indexed path on a parsed ItemInfo dict.
+
+    Path syntax: ``field``, ``field.subfield``, ``field[N]``,
+    ``field[N].subfield``, ``a.b[N].c.d``. Returns
+    ``(parent_container, final_segment)`` so the caller can do
+    ``parent[final_segment] = new_value`` (works whether parent is
+    a dict and segment is a key, or parent is a list and segment is
+    an int index).
+
+    Returns None if any segment fails to resolve (missing dict key,
+    list index out of range, type mismatch).
+
+    Used by the iteminfo writer to apply Format 3 intents that
+    target nested struct sub-fields. Bug confirmed 2026-05-08
+    against gmVIP233 / niyaruza prefab_data_list[N].tribe_gender_list
+    and floozo drop_default_data.X paths.
+    """
+    import re
+    # Tokenize: identifier OR [N]
+    tokens: list[tuple[str, object]] = []
+    for m in re.finditer(r"([A-Za-z_]\w*)|\[(\d+)\]", path):
+        name, idx = m.groups()
+        if name is not None:
+            tokens.append(("key", name))
+        else:
+            tokens.append(("idx", int(idx)))
+    if not tokens:
+        return None
+
+    cur: object = item
+    for kind, val in tokens[:-1]:
+        try:
+            if kind == "key":
+                # First-segment key may need camelCase / underscore
+                # bridging via _resolve_field_name for round-1 lookup.
+                if isinstance(cur, dict) and val not in cur:
+                    resolved = _resolve_field_name(str(val), cur)
+                    if resolved is None:
+                        return None
+                    cur = cur[resolved]
+                else:
+                    cur = cur[val]  # type: ignore[index]
+            else:
+                cur = cur[val]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            return None
+
+    last_kind, last_val = tokens[-1]
+    # Final-segment key bridging: same dialect handling as multi-segment
+    if last_kind == "key" and isinstance(cur, dict) and last_val not in cur:
+        resolved = _resolve_field_name(str(last_val), cur)
+        if resolved is not None:
+            return (cur, resolved)
+        return None
+    return (cur, last_val)
+
+
 def build_iteminfo_intent_change(
     vanilla_body: bytes,
     intents: "list[Format3Intent]",
@@ -124,6 +184,30 @@ def build_iteminfo_intent_change(
                 intent.op, intent.key, intent.field)
             continue
         item = by_key[intent.key]
+        # Nested path (dotted / indexed): walk the parsed dict to the
+        # assignment target. Used for prefab_data_list[N].xxx,
+        # drop_default_data.xxx, etc. The path-resolver returns
+        # (parent_container, final_segment) for assignment.
+        if "." in intent.field or "[" in intent.field:
+            target = _resolve_path_target(item, intent.field)
+            if target is None:
+                skipped_field += 1
+                logger.warning(
+                    "iteminfo writer: nested path %r did not resolve "
+                    "for key=%d, skipping (segment missing or index "
+                    "out of range)", intent.field, intent.key)
+                continue
+            parent, last_seg = target
+            try:
+                parent[last_seg] = intent.new
+                applied += 1
+            except (KeyError, IndexError, TypeError) as e:
+                logger.warning(
+                    "iteminfo writer: nested-path assignment on "
+                    "key=%d field=%r failed: %s",
+                    intent.key, intent.field, e)
+            continue
+
         # Resolve field name: try direct (snake_case-no-prefix as the
         # field-names dialect emits) first, then underscore-stripped +
         # snake-case of camelCase for schema-style names like

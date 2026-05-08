@@ -537,6 +537,21 @@ def _diagnose_unsupported_intent(
         if tn == "buffinfo" and (field or "").startswith(
                 "buff_data_list["):
             return None
+        # iteminfo: the native writer's path resolver handles known
+        # nested-path shapes. Don't reject these at validation, the
+        # writer walks the parsed item dict and emits the change.
+        # Bug confirmed 2026-05-08 against
+        # gmVIP233's Marni_Devotee_PlateArmor_Helm
+        # (prefab_data_list[N].tribe_gender_list), niyaruza's
+        # kliff_Wears_Damiane_Armor (same path), and floozo's cloak
+        # (drop_default_data.add_socket_material_item_list,
+        # drop_default_data.use_socket).
+        if tn == "iteminfo":
+            f = field or ""
+            if (f.startswith("prefab_data_list[")
+                    or f.startswith("drop_default_data.")
+                    or f.startswith("gimmick_visual_prefab_data_list[")):
+                return None
         return (
             f"field '{field}' targets a nested struct sub-field "
             f"(dotted path). Format 3 nested-field writes are not "
