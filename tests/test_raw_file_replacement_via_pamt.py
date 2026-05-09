@@ -162,6 +162,80 @@ def test_detect_tries_progressively_shorter_relative_paths(
     assert matches[0][0] == inner_rel
 
 
+def test_import_raw_file_replacements_runs_without_nameerror(
+        tmp_path, monkeypatch):
+    """End-to-end smoke: feed the importer a single fake match with
+    stubbed dependencies. A previous regression shipped a build that
+    referenced ``_prettify`` from inside the function without
+    importing it, so the freezer compiled fine but every real-user
+    import bombed with NameError. This test exercises the function
+    path so any symbol-resolution gap fails CI before the build."""
+    from cdumm.engine import import_handler as ih
+
+    # Synthetic mod source file
+    src = tmp_path / "src.pabgb"
+    src.write_bytes(b"new bytes from the user")
+    fake_entry = _FakePazEntry(
+        path="gamedata/binary__/client/bin/skill.pabgb",
+        paz_file=str(tmp_path / "0008" / "0.paz"),
+        offset=100, comp_size=200, orig_size=200,
+        compression_type=0, flags=0, paz_index=0, encrypted=False)
+
+    # Stub DB: just enough surface for the function to insert rows.
+    class _FakeDB:
+        def __init__(self):
+            self._next_id = 7
+            class _Conn:
+                def __init__(self, outer):
+                    self.outer = outer
+                    self.executed: list[tuple] = []
+                def execute(self, sql, params=()):
+                    self.executed.append((sql, params))
+                    if "MAX(priority)" in sql:
+                        class _R:
+                            def fetchone(self_):
+                                return (1,)
+                        return _R()
+                    if "INSERT INTO mods" in sql:
+                        class _C:
+                            lastrowid = self.outer._next_id
+                        return _C()
+                    return self
+                def commit(self):
+                    pass
+            self.connection = _Conn(self)
+    db = _FakeDB()
+
+    # Stub version_detector so no real game dir is needed.
+    monkeypatch.setattr(
+        "cdumm.engine.version_detector.detect_game_version",
+        lambda gd: None)
+
+    # Stub save_entry_delta so the call doesn't actually need a real
+    # disk delta layout.
+    saved = []
+    def fake_save(content, metadata, delta_path):
+        saved.append((bytes(content), dict(metadata), delta_path))
+    monkeypatch.setattr(
+        "cdumm.engine.delta_engine.save_entry_delta", fake_save)
+
+    matches = [(fake_entry.path, src, fake_entry)]
+    result = ih._import_raw_file_replacements_as_entr(
+        matches=matches,
+        game_dir=tmp_path,
+        db=db,
+        deltas_dir=tmp_path / "deltas",
+        mod_name="Healthbar Always On",
+    )
+
+    assert result is not None
+    assert result.changed_files == [fake_entry.path]
+    assert len(saved) == 1
+    saved_bytes, saved_meta, _ = saved[0]
+    assert saved_bytes == b"new bytes from the user"
+    assert saved_meta["entry_path"] == fake_entry.path
+
+
 def test_detect_returns_empty_when_no_files_resolve(
         tmp_path, monkeypatch):
     """If no file in the mod folder resolves via PAMT, return an

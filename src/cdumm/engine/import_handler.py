@@ -671,6 +671,9 @@ def _import_raw_file_replacements_as_entr(
     JSON byte-patch mods so apply-time composition works identically.
     """
     from cdumm.engine.delta_engine import save_entry_delta
+    from cdumm.engine.json_patch_handler import (
+        _derive_pamt_dir, _prettify,
+    )
     from cdumm.engine.version_detector import detect_game_version
 
     result = ModImportResult(_prettify(mod_name))
