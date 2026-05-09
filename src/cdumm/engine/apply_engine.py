@@ -2784,16 +2784,36 @@ class ApplyWorker(QObject):
                     d.get("mod_name", "?")
                     for d in full_replace_sorted[1:]
                 ]
-                msg = (
-                    f"Skipped conflicting full-replace delta(s) for "
-                    f"'{file_path}' from: {', '.join(skipped)}. "
-                    f"Each mod ships a complete replacement of this "
-                    f"file, so CDUMM cannot combine them. Kept: "
-                    f"'{winner.get('mod_name', '?')}' (highest "
-                    f"priority). To use a skipped mod instead, raise "
-                    f"its priority above the kept one in your mod "
-                    f"list."
-                )
+                # Plain-English banner. Replaces the previous
+                # dev-style version that confused users (Faisal
+                # screenshot 2026-05-09). Matches the overlay-merge
+                # branch's voice for consistency.
+                winner_name = winner.get("mod_name", "?")
+                shown = skipped[:5]
+                more = len(skipped) - len(shown)
+                names_block = ", ".join(f"'{n}'" for n in shown)
+                if more > 0:
+                    names_block += f" and {more} more"
+                if len(skipped) == 1:
+                    msg = (
+                        f"'{shown[0]}' could not be applied."
+                        f" '{winner_name}' is changing the same game"
+                        f" data and CDUMM can only keep one of them."
+                        f" To use '{shown[0]}' instead,"
+                        f" move it higher in the mod list"
+                        f" than '{winner_name}'."
+                        f" (File: {file_path})"
+                    )
+                else:
+                    msg = (
+                        f"Some mods could not be applied:"
+                        f" {names_block}. '{winner_name}' is changing"
+                        f" the same game data and CDUMM can only keep"
+                        f" one. To activate one of these,"
+                        f" move it higher in the mod list"
+                        f" than '{winner_name}'."
+                        f" (File: {file_path})"
+                    )
                 logger.warning(msg)
                 if hasattr(self, "_soft_warnings"):
                     self._soft_warnings.append(msg)
@@ -3033,22 +3053,40 @@ class ApplyWorker(QObject):
                     ]
                     if size_changed:
                         winner_name, winner_body = ordered[-1]
-                        size_summary = ", ".join(
-                            f"'{n}' ({sz} bytes)"
-                            for n, sz in size_changed
-                        )
-                        msg = (
-                            f"Some mods on '{entry_path}' change the "
-                            f"file size. CDUMM cannot byte-merge them "
-                            f"with the others without truncating the "
-                            f"new bytes mid-token. Kept: "
-                            f"'{winner_name}' (highest priority) at "
-                            f"its full size; merged none of the "
-                            f"others into it. Size-changing mods: "
-                            f"{size_summary}. To use a different "
-                            f"mod's version, raise its priority above "
-                            f"'{winner_name}' in your mod list."
-                        )
+                        # Plain-English banner. Replaces the previous
+                        # dev-style version that confused users
+                        # (Faisal screenshot 2026-05-09). Matches the
+                        # overlay-merge branch's voice for consistency.
+                        dropped_names = [n for n, _ in size_changed
+                                         if n != winner_name]
+                        shown = dropped_names[:5]
+                        more = len(dropped_names) - len(shown)
+                        names_block = ", ".join(
+                            f"'{n}'" for n in shown)
+                        if more > 0:
+                            names_block += f" and {more} more"
+                        if len(dropped_names) == 1:
+                            msg = (
+                                f"'{shown[0]}' could not be applied."
+                                f" It changes the same game data as"
+                                f" '{winner_name}' but in a way that"
+                                f" cannot be combined with the others."
+                                f" To use '{shown[0]}' instead,"
+                                f" move it higher in the mod list"
+                                f" than '{winner_name}'."
+                                f" (File: {entry_path})"
+                            )
+                        else:
+                            msg = (
+                                f"Some mods could not be applied:"
+                                f" {names_block}. They change the same"
+                                f" game data as '{winner_name}' in a"
+                                f" way that cannot be combined with the"
+                                f" others. To activate one,"
+                                f" move it higher in the mod list"
+                                f" than '{winner_name}'."
+                                f" (File: {entry_path})"
+                            )
                         logger.warning(msg)
                         if hasattr(self, "_soft_warnings"):
                             self._soft_warnings.append(msg)

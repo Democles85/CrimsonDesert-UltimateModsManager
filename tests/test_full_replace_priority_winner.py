@@ -98,7 +98,20 @@ def test_only_priority_winner_full_replace_applies(tmp_path):
     assert any("Graphics Mod" in m for m in captured), (
         f"Expected a warning naming the dropped mod, captured: "
         f"{captured!r}")
-    assert any("conflicting full-replace" in m.lower() for m in captured)
+    # Plain-English contract (rewritten 2026-05-09 from the old
+    # "conflicting full-replace" dev phrasing per Faisal screenshot).
+    # The warning must read like a sentence to a non-developer: name
+    # the dropped mod, say it could not be applied, name the winning
+    # mod, and tell the user how to swap them.
+    assert any("could not be applied" in m for m in captured), (
+        f"Expected the warning to say the dropped mod 'could not be "
+        f"applied' in plain English, captured: {captured!r}")
+    assert any(("higher in the mod list" in m
+                or "raise its priority" in m)
+               for m in captured), (
+        f"Expected the warning to tell the user how to swap the "
+        f"winner (move higher in the mod list / raise priority), "
+        f"captured: {captured!r}")
 
 
 def test_single_full_replace_still_applies_normally(tmp_path):
