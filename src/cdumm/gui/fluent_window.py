@@ -4594,13 +4594,18 @@ class CdummWindow(FluentWindow):
                 import shutil
                 shutil.rmtree(str(tmp), ignore_errors=True)
                 self._pending_tmp_cleanup = None
-            # Clean variant-picker pre-extract dir (when a picker fired
-            # and the worker was fed a path inside this temp tree).
+            # Variant-picker pre-extract dir cleanup is DEFERRED until
+            # AFTER the ASI install loop further down. The
+            # `_pending_asi_from_variant` list holds paths INSIDE this
+            # temp tree (Character Creator's CharacterCreatorHead.asi
+            # being the canonical case) and deleting the tree here
+            # would make every `p.exists()` check in the install loop
+            # fall through, silently dropping the .asi. Capture the
+            # path, clear the slot so concurrent imports cannot race
+            # on it, and delete after the loop runs. Democles85 PR #86
+            # (GitHub 2026-05-10).
             vtmp = getattr(self, '_pending_variant_cleanup', None)
-            if vtmp:
-                import shutil
-                shutil.rmtree(str(vtmp), ignore_errors=True)
-                self._pending_variant_cleanup = None
+            self._pending_variant_cleanup = None
 
             # Primary mod id captured from the worker's "done" message.
             # Compound imports (Lightsaber: CB + shop JSON siblings) write
@@ -4897,6 +4902,15 @@ class CdummWindow(FluentWindow):
                             _sh.rmtree(parent, ignore_errors=True)
                 except Exception as e:
                     logger.warning("Failed to install staged ASI files: %s", e)
+
+            # Variant-picker pre-extract tree is now safe to remove
+            # (the ASI install loop above no longer needs the staged
+            # paths). Deferred from the early-cleanup section near the
+            # top of _on_finished so `_pending_asi_from_variant` can
+            # still see real files when it runs.
+            if vtmp is not None:
+                import shutil
+                shutil.rmtree(str(vtmp), ignore_errors=True)
 
             self._refresh_all()
             if asi_count > 0:
