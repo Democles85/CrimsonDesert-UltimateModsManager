@@ -5326,6 +5326,46 @@ class CdummWindow(FluentWindow):
                 "Failed to store Nexus metadata for variant mod %d: %s",
                 mod_id, e)
 
+        # Faisal 2026-05-11: a configurable mod re-imported via the
+        # picker (variant + multi-variant paths above all flow through
+        # here) used to leave the "Click To Update" pill RED until the
+        # next 30-min Nexus poll. We just persisted the new version on
+        # the row, so the cached _nexus_updates entry for this mod is
+        # now stale. Clear it in-memory and re-render so the pill goes
+        # GREEN immediately, matching the dedup-skip path at line ~3647
+        # that already does this for same-version skips.
+        try:
+            # Use the row's own nexus_mod_id (the existing row may have
+            # had one even when this drop's filename did not parse).
+            row = self._db.connection.execute(
+                "SELECT nexus_mod_id, version FROM mods WHERE id = ?",
+                (int(mod_id),)).fetchone()
+            row_nid = row[0] if row else None
+            row_ver = (row[1] if row and row[1] else "")
+            if (row_nid
+                    and getattr(self, "_nexus_updates", None)):
+                from cdumm.engine.nexus_api import (
+                    clear_outdated_after_update,
+                )
+                self._nexus_updates = clear_outdated_after_update(
+                    self._nexus_updates,
+                    int(row_nid),
+                    row_ver,
+                )
+                if hasattr(self, "paz_mods_page"):
+                    self.paz_mods_page.set_nexus_updates(
+                        self._nexus_updates)
+                if hasattr(self, "asi_plugins_page"):
+                    try:
+                        self.asi_plugins_page.set_nexus_updates(
+                            self._nexus_updates)
+                    except AttributeError:
+                        pass
+        except Exception as _e:
+            logger.debug(
+                "post-update pill clear failed for mod %d: %s",
+                mod_id, _e)
+
     def _match_existing_by_name(self, downloaded_path: str | Path) -> int | None:
         """Return ``mods.id`` of an existing row whose name matches the
         download stem (exact, prettified) — used by the nxm:// flow when
