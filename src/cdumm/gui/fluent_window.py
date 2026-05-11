@@ -3128,7 +3128,10 @@ class CdummWindow(FluentWindow):
         # forced through the single-import path so the binding survives
         # — the batch worker doesn't accept per-file mod_ids.
         if len(self._import_queue) > 1:
-            from cdumm.gui.preset_picker import find_json_presets, find_folder_variants
+            from cdumm.gui.preset_picker import (
+                find_json_presets, find_folder_variants,
+                _detect_preset_groups, _detect_mutex_offset_groups,
+            )
             prebound = getattr(self, "_existing_mod_id_map", {})
             batch = []
             deferred = []  # multi-preset mods that need dialog
@@ -3142,6 +3145,32 @@ class CdummWindow(FluentWindow):
                     if len(presets) > 1:
                         needs_dialog = True
                     elif len(find_folder_variants(p)) >= 2:
+                        needs_dialog = True
+                elif p.is_file() and p.suffix.lower() == ".json":
+                    # Zowbaid GitHub #92: a loose JSON mod that ships
+                    # mutex preset radios at the same byte offset (e.g.
+                    # Unlimited Dragon Flying's five Ride Duration
+                    # variants at one offset) used to go straight into
+                    # the batch worker with no picker, because the
+                    # batch-time dialog gate only checked directories
+                    # and archives. Result: every variant got applied
+                    # silently and the cog later showed the "all
+                    # enabled" state. Peek the JSON content here and
+                    # defer to single-import if the file has a real
+                    # mutex / preset-group choice the user needs to
+                    # make. Plain offset patches (the common case)
+                    # still batch normally so dropping 50 unrelated
+                    # JSON mods at once does not prompt 50 times.
+                    try:
+                        import json as _json_peek
+                        with open(p, "r", encoding="utf-8") as _jf:
+                            _jdata = _json_peek.load(_jf)
+                    except Exception:
+                        _jdata = None
+                    if _jdata is not None and (
+                        _detect_mutex_offset_groups(_jdata) is not None
+                        or _detect_preset_groups(_jdata) is not None
+                    ):
                         needs_dialog = True
                 elif p.is_file() and p.suffix.lower() in (".zip", ".7z", ".rar"):
                     if _archive_likely_needs_dialog(p):
@@ -4595,11 +4624,15 @@ class CdummWindow(FluentWindow):
                 shutil.rmtree(str(tmp), ignore_errors=True)
                 self._pending_tmp_cleanup = None
             # Variant-picker pre-extract dir cleanup is DEFERRED until
-            # after the ASI install loop below — `_pending_asi_from_variant`
-            # holds paths INSIDE this tree (Character Creator
-            # CharacterCreatorHead.asi). Deleting it here would make every
-            # `p.exists()` check below fail and the .asi would silently
-            # not be copied into bin64.
+            # AFTER the ASI install loop further down. The
+            # `_pending_asi_from_variant` list holds paths INSIDE this
+            # temp tree (Character Creator's CharacterCreatorHead.asi
+            # being the canonical case) and deleting the tree here
+            # would make every `p.exists()` check in the install loop
+            # fall through, silently dropping the .asi. Capture the
+            # path, clear the slot so concurrent imports cannot race
+            # on it, and delete after the loop runs. Democles85 PR #86
+            # (GitHub 2026-05-10).
             vtmp = getattr(self, '_pending_variant_cleanup', None)
             self._pending_variant_cleanup = None
 
@@ -4700,37 +4733,56 @@ class CdummWindow(FluentWindow):
             # nexus_mod_id so the red "Click To Update" pill turns
             # green immediately, instead of waiting up to 30 minutes
             # for the next background update check.
-            if nexus_id and hasattr(self, "_nexus_updates") \
-                    and self._nexus_updates:
+            #
+            # Faisal 2026-05-11 robustness: when the dropped filename
+            # does not parse a nexus_id (user dragged a renamed file,
+            # or a non-Nexus build) but the existing row already had
+            # nexus_mod_id stored from a prior import, fall back to
+            # the row's stored value. Without this the pill stays RED
+            # on every update-by-rename-and-drop until the next 30-min
+            # poll, even though the row IS now on the latest. Mirrors
+            # the fix in _store_nexus_metadata_on_row for variant mods.
+            if hasattr(self, "_nexus_updates") and self._nexus_updates:
+                effective_nid = nexus_id
                 try:
-                    from cdumm.engine.nexus_api import clear_outdated_after_update
-                    # clear_outdated_after_update(updates, nexus_mod_id, new_version)
-                    # — pass the just-imported version (parsed from the
-                    # Nexus filename, falls back to whatever local row
-                    # has) so the GREEN pill carries an accurate
-                    # version label.
-                    new_ver = (nexus_file_ver or "").strip()
-                    if not new_ver:
-                        try:
-                            row = self._db.connection.execute(
-                                "SELECT version FROM mods WHERE id = ?",
-                                (_pid,)).fetchone()
-                            new_ver = (row[0] if row and row[0] else "").strip()
-                        except Exception:
-                            new_ver = ""
-                    self._nexus_updates = clear_outdated_after_update(
-                        self._nexus_updates, int(nexus_id), new_ver)
-                    if hasattr(self, 'paz_mods_page'):
-                        self.paz_mods_page.set_nexus_updates(
-                            self._nexus_updates)
-                    if hasattr(self, 'asi_plugins_page'):
-                        try:
-                            self.asi_plugins_page.set_nexus_updates(
+                    if not effective_nid:
+                        row = self._db.connection.execute(
+                            "SELECT nexus_mod_id FROM mods WHERE id = ?",
+                            (_pid,)).fetchone()
+                        if row and row[0]:
+                            effective_nid = int(row[0])
+                except Exception:
+                    pass
+                if effective_nid:
+                    try:
+                        from cdumm.engine.nexus_api import clear_outdated_after_update
+                        # clear_outdated_after_update(updates, nexus_mod_id, new_version)
+                        # — pass the just-imported version (parsed from the
+                        # Nexus filename, falls back to whatever local row
+                        # has) so the GREEN pill carries an accurate
+                        # version label.
+                        new_ver = (nexus_file_ver or "").strip()
+                        if not new_ver:
+                            try:
+                                row = self._db.connection.execute(
+                                    "SELECT version FROM mods WHERE id = ?",
+                                    (_pid,)).fetchone()
+                                new_ver = (row[0] if row and row[0] else "").strip()
+                            except Exception:
+                                new_ver = ""
+                        self._nexus_updates = clear_outdated_after_update(
+                            self._nexus_updates, int(effective_nid), new_ver)
+                        if hasattr(self, 'paz_mods_page'):
+                            self.paz_mods_page.set_nexus_updates(
                                 self._nexus_updates)
-                        except AttributeError:
-                            pass
-                except Exception as e:
-                    logger.debug("pill-clear failed: %s", e)
+                        if hasattr(self, 'asi_plugins_page'):
+                            try:
+                                self.asi_plugins_page.set_nexus_updates(
+                                    self._nexus_updates)
+                            except AttributeError:
+                                pass
+                    except Exception as e:
+                        logger.debug("pill-clear failed: %s", e)
 
             # Post-import: store original drop name + extract version
             try:
@@ -4899,9 +4951,11 @@ class CdummWindow(FluentWindow):
                 except Exception as e:
                     logger.warning("Failed to install staged ASI files: %s", e)
 
-            # Now that variant-bundled ASIs have been copied to bin64, the
-            # pre-extract tree is safe to remove (see deferred assignment
-            # above the ASI block).
+            # Variant-picker pre-extract tree is now safe to remove
+            # (the ASI install loop above no longer needs the staged
+            # paths). Deferred from the early-cleanup section near the
+            # top of _on_finished so `_pending_asi_from_variant` can
+            # still see real files when it runs.
             if vtmp is not None:
                 import shutil
                 shutil.rmtree(str(vtmp), ignore_errors=True)
@@ -5290,6 +5344,46 @@ class CdummWindow(FluentWindow):
             logger.debug(
                 "Failed to store Nexus metadata for variant mod %d: %s",
                 mod_id, e)
+
+        # Faisal 2026-05-11: a configurable mod re-imported via the
+        # picker (variant + multi-variant paths above all flow through
+        # here) used to leave the "Click To Update" pill RED until the
+        # next 30-min Nexus poll. We just persisted the new version on
+        # the row, so the cached _nexus_updates entry for this mod is
+        # now stale. Clear it in-memory and re-render so the pill goes
+        # GREEN immediately, matching the dedup-skip path at line ~3647
+        # that already does this for same-version skips.
+        try:
+            # Use the row's own nexus_mod_id (the existing row may have
+            # had one even when this drop's filename did not parse).
+            row = self._db.connection.execute(
+                "SELECT nexus_mod_id, version FROM mods WHERE id = ?",
+                (int(mod_id),)).fetchone()
+            row_nid = row[0] if row else None
+            row_ver = (row[1] if row and row[1] else "")
+            if (row_nid
+                    and getattr(self, "_nexus_updates", None)):
+                from cdumm.engine.nexus_api import (
+                    clear_outdated_after_update,
+                )
+                self._nexus_updates = clear_outdated_after_update(
+                    self._nexus_updates,
+                    int(row_nid),
+                    row_ver,
+                )
+                if hasattr(self, "paz_mods_page"):
+                    self.paz_mods_page.set_nexus_updates(
+                        self._nexus_updates)
+                if hasattr(self, "asi_plugins_page"):
+                    try:
+                        self.asi_plugins_page.set_nexus_updates(
+                            self._nexus_updates)
+                    except AttributeError:
+                        pass
+        except Exception as _e:
+            logger.debug(
+                "post-update pill clear failed for mod %d: %s",
+                mod_id, _e)
 
     def _match_existing_by_name(self, downloaded_path: str | Path) -> int | None:
         """Return ``mods.id`` of an existing row whose name matches the
@@ -5804,19 +5898,26 @@ class CdummWindow(FluentWindow):
                 title=tr("main.game_not_found"), content=tr("main.game_not_found_msg"),
                 duration=5000, position=InfoBarPosition.TOP, parent=self)
             return
+        # Detect install type up front so the except clause can
+        # branch on it. Steam / Xbox installs MUST go through their
+        # respective DRM bootstraps -- the bare-exe fallback that
+        # used to live in `except Exception` silently bypassed
+        # Themida + Denuvo on Steam installs and the game exited
+        # within a fraction of a second while CDUMM still showed
+        # a green "Game launched" toast. zvitko-hue GitHub #88.
+        from cdumm.storage.game_finder import is_steam_install, is_xbox_install
+        steam = is_steam_install(self._game_dir)
+        xbox = is_xbox_install(self._game_dir)
         try:
-            from cdumm.storage.game_finder import is_steam_install, is_xbox_install
-            if is_steam_install(self._game_dir):
+            if steam:
                 # Launch through Steam for proper overlay/DRM.
                 # get_steam_app_id reads steam_appid.txt / appmanifest_*.acf
                 # and falls back to the verified Crimson Desert AppID (3321460).
-                # Previously this hard-coded the wrong AppID which caused Steam
-                # to show "Game configuration unavailable".
                 from cdumm.engine.game_monitor import get_steam_app_id
                 app_id = get_steam_app_id(self._game_dir)
                 open_path(f"steam://rungameid/{app_id}")
-            elif is_xbox_install(self._game_dir):
-                # Xbox Game Pass — launch through the Xbox app
+            elif xbox:
+                # Xbox Game Pass -- launch through the Xbox app
                 open_path("shell:AppsFolder\\PearlAbyss.CrimsonDesert_8wekyb3d8bbwe!Game")
             else:
                 subprocess.Popen([str(exe)], cwd=str(self._game_dir / "bin64"))
@@ -5825,7 +5926,24 @@ class CdummWindow(FluentWindow):
                 duration=3000, position=InfoBarPosition.TOP, parent=self)
             self.showMinimized()
         except Exception as e:
-            # Fallback: try direct exe launch
+            if steam:
+                # Could not reach Steam. Spawning the bare exe here
+                # would silently fail under Themida + Denuvo and the
+                # user would see a fake "launched" toast. Surface a
+                # clear, actionable error instead.
+                InfoBar.error(
+                    title=tr("infobar.launch_failed"),
+                    content=tr("main.launch_failed_steam_not_running"),
+                    duration=6000, position=InfoBarPosition.TOP, parent=self)
+                return
+            if xbox:
+                InfoBar.error(
+                    title=tr("infobar.launch_failed"),
+                    content=tr("main.launch_failed_xbox_not_running"),
+                    duration=6000, position=InfoBarPosition.TOP, parent=self)
+                return
+            # Non-storefront install: bare-exe fallback is still
+            # the right call (no DRM bootstrap to bypass).
             try:
                 subprocess.Popen([str(exe)], cwd=str(self._game_dir / "bin64"))
                 InfoBar.success(

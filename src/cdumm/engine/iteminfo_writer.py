@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 # wholesale via dict assignment. List shapes match the JSON
 # Format 3 intent's `new` value verbatim.
 SUPPORTED_FIELDS = {
-    "enchant_data_list",
     "equip_passive_skill_list",
     "occupied_equip_slot_data_list",
     "item_tag_list",
@@ -52,6 +51,27 @@ SUPPORTED_FIELDS = {
     "transmutation_material_item_group_list",
     "multi_change_info_list",
     "gimmick_tag_list",
+}
+
+# Fields that mod authors target on iteminfo but the native parser's
+# ``_ITEM_FIELDS`` schema currently doesn't emit. Adding one of these
+# to a parsed record is silently dropped by ``_write_item``, so the
+# additive-write branch below cannot honour them. Surface a clear,
+# user-actionable skip reason instead of pretending to apply.
+#
+# Re-add a field to ``SUPPORTED_FIELDS`` (and remove it from this set)
+# only after a paired ``_read_X`` / ``_write_X`` round-trip lands in
+# ``iteminfo_native_parser._ITEM_FIELDS`` and survives the 6235-record
+# vanilla walk in ``test_iteminfo_walk_real_game.py``.
+UNWRITEABLE_KNOWN_FIELDS = {
+    # Live-binary EnchantData layout has not been reverse-engineered;
+    # the parser comment in iteminfo_native_parser.py marks it
+    # "likely removed in the live schema along with other layout
+    # shifts". GitHub #79 (UnLuckyLust 2026-05-10): a mod that adds
+    # enchants to an item without any in vanilla used to silently
+    # report "0 byte changes". The writer now logs a clear skip
+    # naming the field so the user understands why.
+    "enchant_data_list",
 }
 
 
@@ -165,6 +185,23 @@ def build_iteminfo_intent_change(
     skipped_key = 0
     skipped_field = 0
     for intent in intents:
+        # Field-level early skip: some intent fields are known not
+        # writeable by the current iteminfo serialiser even though
+        # mod authors target them. The additive-write branch below
+        # used to accept these (and bumped `applied`), but the
+        # serialiser dropped the new key on its way out, producing
+        # silent zero-byte changes (UnLuckyLust GitHub #79).
+        if intent.field in UNWRITEABLE_KNOWN_FIELDS:
+            skipped_field += 1
+            logger.warning(
+                "iteminfo writer: field %r is not currently "
+                "writeable by CDUMM (the iteminfo serializer's "
+                "schema does not emit this field). Intent on "
+                "key=%d dropped. This needs schema support in "
+                "iteminfo_native_parser._ITEM_FIELDS before "
+                "modded values can land in game bytes.",
+                intent.field, intent.key)
+            continue
         if intent.key not in by_key:
             skipped_key += 1
             logger.debug(
